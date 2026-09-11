@@ -15,9 +15,13 @@ class TrackerConfig {
     this.smoothingAlpha = 0.3,
     this.signalGapThreshold = const Duration(seconds: 30),
     this.gpsStaleThreshold = const Duration(seconds: 10),
-    this.paceWindow = const Duration(seconds: 30),
-    this.minPaceWindow = const Duration(seconds: 10),
+    this.paceWindow = const Duration(seconds: 10),
+    this.minPaceWindow = const Duration(seconds: 5),
     this.minDistanceForAveragePaceMeters = 50,
+    this.defaultStrideMeters = 0.75,
+    this.minStrideMeters = 0.4,
+    this.maxStrideMeters = 1.7,
+    this.minCalibrationSteps = 100,
   });
 
   /// F1 — fixes worse than this are noise, not data.
@@ -66,6 +70,12 @@ class TrackerConfig {
   final Duration gpsStaleThreshold;
 
   /// Rolling window used for live pace and speed.
+  ///
+  /// This is a direct responsiveness/steadiness trade. At 30s the number was
+  /// unusable in the field: a 10s sprint averaged against the 20s of jogging
+  /// before it read as 8 km/h, and slowing to a walk took most of a minute to
+  /// show up. 10s tracks real changes within a few seconds and is still long
+  /// enough that one noisy fix cannot swing it.
   final Duration paceWindow;
 
   /// Below this much data, live pace/speed is not meaningful yet.
@@ -73,4 +83,18 @@ class TrackerConfig {
 
   /// Average pace over a few noisy metres is a random number; suppress it.
   final double minDistanceForAveragePaceMeters;
+
+  /// Stride length assumed before the run has calibrated one, in metres.
+  /// Roughly an average adult walking stride.
+  final double defaultStrideMeters;
+
+  /// Calibrated stride is clamped to this range. A stride outside it means the
+  /// calibration was polluted (GPS drift while standing, steps counted in a
+  /// car), not that someone has an extraordinary gait.
+  final double minStrideMeters;
+  final double maxStrideMeters;
+
+  /// How many steps must be observed alongside good GPS before the measured
+  /// stride is trusted over [defaultStrideMeters].
+  final int minCalibrationSteps;
 }

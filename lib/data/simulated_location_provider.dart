@@ -4,6 +4,14 @@ import 'dart:math' as math;
 import '../domain/location_provider.dart';
 import '../domain/models/location_sample.dart';
 
+/// NOT WIRED INTO THE APP.
+///
+/// The demo toggle was removed from the UI so that field testing exercises the
+/// real receiver and nothing else. The class is kept because it is the only way
+/// to demonstrate the blackout and standing-still cases without going outside,
+/// and re-enabling it is a one-line change in `RunController`: construct this
+/// instead of `GeolocatorLocationProvider`.
+///
 /// A replayable fake GPS: runs a scripted lap around a 1 km block.
 ///
 /// This exists because the deliverable has to be *testable*. A reviewer with an

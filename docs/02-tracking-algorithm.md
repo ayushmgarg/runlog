@@ -87,9 +87,14 @@ activeElapsed = completedSegments + (status == active ? now - segmentStartedAt :
 
 - **Average pace** = `activeElapsed / distance`, shown as `mm:ss /km`. Suppressed to `--:--`
   until distance ≥ 50 m, because pace over 3 m of GPS noise is a random number.
-- **Current pace** = rolling window over the last **30 s**, requiring at least **10 s** of data.
+- **Current pace** = rolling window over the last **10 s**, requiring at least **5 s** of data.
+  Originally 30 s, changed after field testing: a 10 s sprint averaged against the jogging before
+  it read as 8 km/h, and slowing to a walk took most of a minute to show on screen. 10 s reacts
+  within a few seconds and is still long enough that a single noisy fix cannot swing it.
   The window *ends at now*, not at the last recorded point, so when the runner stops the reading
-  decays toward zero on its own instead of freezing at the last running speed. A distance
+  decays toward zero on its own instead of freezing at the last running speed. It is also
+  **restricted to the current segment**, so resuming after a pause reports the pace just set,
+  not the one the runner had when they stopped — a field-reported bug, now covered by a test. A distance
   threshold on the window is unnecessary: F3/F6 mean noise never enters the accumulated distance
   in the first place. The chip's own `speed` field is ignored — it is inconsistent across devices
   and unavailable in mocks.
@@ -108,6 +113,39 @@ Pace and speed are two views of one number, so they can never disagree on screen
 (`--`) under the same staleness rule as pace. The GPS chip's own `speed` field stays unused for
 the same reason given above.
 
+## 5c. The step-counter fallback
+
+GPS is the instrument; the hardware pedometer is the fallback. The rule is strict: **while GPS
+is good, steps contribute no distance whatsoever.** They only calibrate.
+
+| state | what steps do |
+|---|---|
+| GPS good | nothing to distance; the steps counted are paired with the metres GPS measured over the same interval, and the ratio is this runner's stride |
+| GPS weak / absent, steps arriving | `distance += steps x stride`, and pace/speed come from the distance timeline as usual |
+| GPS weak, no steps arriving | nothing — distance holds, live pace blanks |
+| paused | ignored entirely, like position fixes |
+
+Design notes:
+
+- **Distance and speed read off a shared timeline**, not off the route, precisely so that a
+  source with no coordinates can still move them. Each entry is (time, cumulative metres,
+  segment); the list is pruned to a few pace-windows, so it is O(window) however long the run.
+- **Calibration pairs matched intervals.** Only the GPS distance covered *between two step
+  readings* may be divided by the steps between them. Dividing the whole run's distance by a
+  handful of steps would produce a metres-per-step stride.
+- **The result is clamped to 0.4–1.7 m.** GPS drift while standing at a light would otherwise
+  teach the tracker a stride that wrecks the fallback later.
+- **100 steps of good GPS** are required before the measured stride is trusted over the 0.75 m
+  default.
+- **A counter that goes backwards is re-baselined**, not treated as a delta: that is a device
+  reboot, and the alternative is either a negative distance or a 50,000-step jump.
+- The step counter reports totals since boot, so the engine only ever takes differences and
+  never has to care where counting began.
+
+Accuracy expectation: roughly 5–10 % once calibrated, worse before. That is materially worse
+than GPS, which is why the run screen switches the badge to **STEPS** while the fallback is
+driving the numbers. An estimate presented as a measurement is the thing to avoid.
+
 ## 6. Edge cases and defined behaviour
 
 | Situation | Behaviour |
@@ -115,8 +153,9 @@ the same reason given above.
 | Permission denied | Start button explains what is blocked and offers "Open settings"; no fake run. `deniedForever` gets a distinct message. |
 | Location services off | Prompt to enable; polls service status and recovers when re-enabled. |
 | No first fix yet | Run starts in `active` with an "Acquiring GPS…" badge; duration runs, distance stays 0 until the first accepted fix. Time should not be lost while the antenna warms up. |
-| GPS lost mid-run | After 10 s with no accepted fix: `weak` badge, current pace blanks. Distance/duration keep running. **No auto-pause** — silently pausing a run is the behaviour runners hate most. |
-| Signal returns after >30 s | New segment (F5): no invented distance, visible break in the route. |
+| GPS lost mid-run | After 10 s with no accepted fix: `weak` badge. If the step counter is available the run keeps measuring from steps and the badge reads `STEPS`; otherwise live pace blanks and distance holds. Duration continues either way. **No auto-pause** — silently pausing a run is the behaviour runners hate most. |
+| Location switched off entirely | Same path as a blackout: steps carry the run. With no step sensor or no permission, duration still runs and distance stays put. |
+| Signal returns after >30 s | New segment (F5): the route polyline breaks, and the two ends are joined on the map by a dashed, dimmed connector. No GPS distance is credited across it; if steps were available, that stretch was already counted from them. |
 | Pause | Anchor dropped. Distance and duration frozen. Position stream is unsubscribed while paused (battery), re-subscribed on resume. |
 | Resume | First accepted fix becomes the new anchor and starts a new segment, so movement during the pause is never counted. |
 | App backgrounded | Android foreground service keeps the stream alive with a persistent notification. Duration is wall-clock, so even a killed stream cannot corrupt it. |

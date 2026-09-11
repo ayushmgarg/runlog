@@ -36,19 +36,10 @@ flutter test
 
 ### Testing it without going outside
 
-The idle screen has a **Simulate a run** switch. It replays a scripted lap around a 1 km block
-that deliberately includes the awkward parts of a real run:
-
-| time | what happens |
-|------|--------------|
-| 0–40 s | running at ~2.8 m/s with realistic GPS scatter |
-| 40–60 s | stopped at a crossing — distance must *not* creep up |
-| 60–95 s | running again |
-| 95–130 s | total signal blackout — the badge goes `GPS WEAK` |
-| 130 s+ | signal returns further along — a gap in the route, not a shortcut |
-
-While it is on, the badge on the run screen reads `SIMULATED`, so a demo run can never be
-mistaken for a recorded one. The switch is disabled once a run is in progress.
+`lib/data/simulated_location_provider.dart` replays a scripted lap — running, a 20 s stop, a
+35 s blackout — that exercises every awkward case indoors. It is deliberately **not wired into
+the UI**, so field testing only ever exercises the real receiver; enabling it means constructing
+it instead of `GeolocatorLocationProvider` in `RunController`.
 
 On an emulator you can also push real fixes: `adb emu geo fix <lon> <lat>`.
 
@@ -64,20 +55,21 @@ Everything the assignment asks for:
 | GPS tracking | `geolocator` stream, Android foreground service so it survives a screen lock |
 | Distance | Filtered and accumulated in `RunTracker` |
 | Duration | Active time only, wall-clock based |
-| Pace | Live (30 s rolling window) + average |
+| Pace | Live (10 s rolling window) + average |
 | Run status | Status pill, dimmed metrics when paused, button label |
 | Pause / Resume | Freezes time and distance; re-anchors GPS on resume |
 | Finish Run | Confirmation dialog, then the run is saved |
 | Run summary | Distance, duration, average pace |
 | Basic route | Polyline on OpenStreetMap tiles |
 
-Two small additions beyond that list:
+Three additions beyond that list:
 
 - **Speed in km/h** next to pace. Same underlying measurement, in the unit most people read
   movement in.
 - **An expandable live map** on the run screen — collapsed by default so the default screen is
   exactly the five elements the brief asks for, and unmounted while collapsed so it costs
   nothing until you ask for it.
+- **A step-counter fallback**, so distance and pace survive losing GPS entirely.
 
 Run history is kept on the device, because a finished run has to be openable again after the
 summary is dismissed.
@@ -130,6 +122,35 @@ runs a filter chain first:
 
 F4b and F6 were both added because tests failed, not because they were designed in — the
 reasoning is written up in [`docs/02-tracking-algorithm.md`](docs/02-tracking-algorithm.md).
+
+### Surviving the loss of GPS
+
+GPS is the measuring instrument; the hardware step counter is the fallback. While the signal is
+good the pedometer contributes no distance at all — it only watches, pairing the steps it counts
+with the metres GPS measured over the same interval to learn **this runner's stride**. The
+moment the signal becomes unusable — indoors, a tunnel, location switched off — steps take over
+and keep distance, pace and speed moving.
+
+That matters because the alternative is a tracker that simply stops counting when you walk into
+a building, which is not what a running watch does.
+
+Being honest about it:
+
+- A step-derived distance is an **estimate**, good to maybe 5–10 % once the stride has
+  calibrated and worse before that (it starts from a 0.75 m population average and needs ~100
+  steps of good GPS to learn better).
+- The run screen says so: the badge changes to **STEPS** while the fallback is driving the
+  numbers, because an estimate must not look like a measurement.
+- The calibrated stride is clamped to 0.4–1.7 m, so GPS drift while standing still cannot teach
+  it an absurd value.
+- A step counter that resets mid-run (a reboot) is re-baselined rather than believed.
+- Refusing the activity-recognition permission, or having no step sensor, costs the fallback and
+  nothing else.
+
+On the map, a stretch covered without GPS is drawn as a **dashed, dimmed connector** between the
+two ends of the gap. A solid line would claim a path that was never recorded; no line at all
+reads as a broken app. The dashes say "we got from here to there, but this part is not data" —
+and the route polyline itself still only contains ground that was actually measured.
 
 Other decisions worth knowing:
 
@@ -199,8 +220,13 @@ Static analysis (`flutter analyze`, `flutter_lints`) is clean with no suppressio
 - **Under a dense tree canopy or between tall buildings** the accuracy gate rejects most fixes,
   so distance will under-report while the badge shows `GPS WEAK`. This is deliberate: the
   alternative is recording noise as running.
-- **Map tiles need a network connection.** Without one the route still draws, on an empty
-  canvas, and no measurement depends on the map.
+- **Map tiles need a network connection**, and there is no offline tile cache: with no data
+  from the start, the map is an empty dark canvas with your route drawn on it — correct shape,
+  correct scale, no streets. Nothing else about the run is affected. Tiles already fetched stay
+  in memory for the session but are not written to disk, so they do not survive a restart.
+- **A cold start with no data is slow to get its first fix.** Phones use the network to download
+  satellite ephemeris (A-GPS); without it the first usable fix can take 30–60 s. Duration starts
+  immediately, so no time is lost, but the opening stretch of distance can be.
 - **A pause longer than the OS is willing to keep the process alive** ends as a recovery prompt
   on the next launch rather than a still-running app. That is a platform constraint, and the
   snapshot exists precisely so nothing is lost.

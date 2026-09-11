@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:plexqo_run/domain/models/location_sample.dart';
 import 'package:plexqo_run/domain/models/run_status.dart';
 import 'package:plexqo_run/domain/run_tracker.dart';
+import 'package:plexqo_run/domain/step_provider.dart';
 
 import 'helpers.dart';
 
@@ -317,6 +318,40 @@ void main() {
       expect(tracker.metrics.currentPaceSecondsPerKm, isNull);
     });
 
+    test('resuming reports the new pace, not the one from before the pause', () {
+      // Reported from the field: after a pause the speed readout carried on
+      // showing the pace the runner had when they stopped, because the rolling
+      // window still contained pre-pause points.
+      tracker.start();
+      feed(straightLine(start: t0, count: 40, metersPerFix: 3));
+      final beforePause = tracker.metrics.currentSpeedMps!;
+      expect(beforePause, greaterThan(2));
+
+      clock.now = t0.add(const Duration(seconds: 40));
+      tracker.pause();
+      clock.advance(const Duration(seconds: 5));
+      tracker.resume();
+
+      // Immediately after resuming there is no new data, so there is no pace
+      // to report -- and crucially not the old one.
+      final justAfter = tracker.metrics.currentSpeedMps;
+      expect(justAfter, anyOf(isNull, lessThan(beforePause / 2)));
+
+      // Now walk slowly: the readout must reflect walking, not the earlier run.
+      final resumeAt = t0.add(const Duration(seconds: 45));
+      feed(straightLine(
+        start: resumeAt.add(const Duration(seconds: 1)),
+        count: 30,
+        metersPerFix: 1,
+        startOffsetMeters: 120,
+      ));
+      clock.now = resumeAt.add(const Duration(seconds: 31));
+
+      final afterResume = tracker.metrics.currentSpeedMps!;
+      expect(afterResume, lessThan(beforePause));
+      expect(afterResume, lessThan(2.0));
+    });
+
     test('average pace is suppressed until the distance means something', () {
       tracker.start();
       clock.advance(const Duration(seconds: 10));
@@ -362,6 +397,142 @@ void main() {
       clock.now = back.timestamp;
       tracker.addSample(back);
       expect(tracker.gpsQuality, GpsQuality.good);
+    });
+  });
+
+  group('step-counter fallback', () {
+    /// The pedometer reports a running total since boot, so the tracker only
+    /// ever sees differences.
+    StepSample steps(int total, int second) => StepSample(
+      cumulativeSteps: total,
+      timestamp: t0.add(Duration(seconds: second)),
+    );
+
+    test('keeps measuring when GPS is unavailable', () {
+      // The case that matters: location switched off, or indoors. A watch keeps
+      // counting here, and so should this.
+      tracker.start();
+      clock.advance(const Duration(seconds: 20));
+      tracker.addStepSample(steps(1000, 20));
+
+      clock.advance(const Duration(seconds: 30));
+      tracker.addStepSample(steps(1040, 50));
+
+      // 40 steps at the default stride, with no GPS to measure against.
+      expect(tracker.distanceMeters, closeTo(40 * 0.75, 0.01));
+      expect(tracker.stepMeters, closeTo(40 * 0.75, 0.01));
+      expect(tracker.isEstimatingFromSteps, isTrue);
+      expect(tracker.metrics.isEstimatingFromSteps, isTrue);
+    });
+
+    test('pace and speed keep working on step data alone', () {
+      tracker.start();
+      clock.advance(const Duration(seconds: 5));
+      tracker.addStepSample(steps(500, 5));
+
+      // 150 steps over 60 s: about 1.9 m/s at the default stride.
+      clock.advance(const Duration(seconds: 60));
+      tracker.addStepSample(steps(650, 65));
+
+      final m = tracker.metrics;
+      expect(m.currentSpeedMps, isNotNull);
+      expect(m.currentSpeedMps, greaterThan(0.5));
+      expect(m.currentPaceSecondsPerKm, isNotNull);
+    });
+
+    test('does not double-count while GPS is measuring', () {
+      tracker.start();
+      feed(straightLine(start: t0, count: 40, metersPerFix: 3));
+      final gpsOnly = tracker.distanceMeters;
+
+      // Steps arriving under a good signal must not add anything: GPS is the
+      // authority, and adding both would roughly double the distance.
+      tracker.addStepSample(steps(100, 39));
+      clock.now = t0.add(const Duration(seconds: 40));
+      tracker.addStepSample(steps(160, 40));
+
+      expect(tracker.distanceMeters, gpsOnly);
+      expect(tracker.stepMeters, 0);
+      expect(tracker.isEstimatingFromSteps, isFalse);
+    });
+
+    test('calibrates stride against GPS, then uses it when the signal drops', () {
+      tracker.start();
+
+      // Walk 600 m under good GPS while the pedometer reports 500 steps, which
+      // is a 1.2 m stride rather than the 0.75 m default.
+      var second = 0;
+      var stepTotal = 1000;
+      tracker.addStepSample(steps(stepTotal, 0));
+      for (var i = 0; i < 100; i++) {
+        second += 1;
+        final sample = sampleAt(
+          northMeters: i * 6.0,
+          eastMeters: 0,
+          at: t0.add(Duration(seconds: second)),
+        );
+        clock.now = sample.timestamp;
+        tracker.addSample(sample);
+        stepTotal += 5;
+        tracker.addStepSample(steps(stepTotal, second));
+      }
+
+      expect(tracker.strideMeters, greaterThan(0.9));
+      expect(tracker.strideMeters, lessThan(1.5));
+
+      // Signal drops; the measured stride, not the default, converts the steps.
+      final beforeGap = tracker.distanceMeters;
+      clock.advance(const Duration(seconds: 40));
+      tracker.addStepSample(steps(stepTotal + 100, second + 40));
+
+      final credited = tracker.distanceMeters - beforeGap;
+      expect(credited, closeTo(100 * tracker.strideMeters, 0.01));
+      expect(credited, greaterThan(100 * 0.9));
+    });
+
+    test('an absurd calibration is clamped rather than trusted', () {
+      // GPS drifting while the runner stands almost still would otherwise teach
+      // the tracker a metres-per-step stride and wreck the fallback.
+      tracker.start();
+      tracker.addStepSample(steps(0, 0));
+      feed(straightLine(start: t0, count: 200, metersPerFix: 3));
+      clock.now = t0.add(const Duration(seconds: 200));
+      tracker.addStepSample(steps(20, 200));
+
+      expect(tracker.strideMeters, lessThanOrEqualTo(1.7));
+      expect(tracker.strideMeters, greaterThanOrEqualTo(0.4));
+    });
+
+    test('a step counter that resets mid-run is re-baselined, not trusted', () {
+      tracker.start();
+      clock.advance(const Duration(seconds: 10));
+      tracker.addStepSample(steps(50000, 10));
+      clock.advance(const Duration(seconds: 10));
+      tracker.addStepSample(steps(50100, 20));
+      final before = tracker.distanceMeters;
+      expect(before, greaterThan(0));
+
+      // Device rebooted: the counter starts again from nearly zero. Treating
+      // that as a negative delta, or as 50000 steps, would both be wrong.
+      clock.advance(const Duration(seconds: 10));
+      tracker.addStepSample(steps(12, 30));
+      expect(tracker.distanceMeters, before);
+
+      clock.advance(const Duration(seconds: 10));
+      tracker.addStepSample(steps(42, 40));
+      expect(tracker.distanceMeters, closeTo(before + 30 * 0.75, 0.01));
+    });
+
+    test('steps are ignored while paused', () {
+      tracker.start();
+      clock.advance(const Duration(seconds: 5));
+      tracker.addStepSample(steps(100, 5));
+      tracker.pause();
+
+      clock.advance(const Duration(seconds: 30));
+      tracker.addStepSample(steps(400, 35));
+
+      expect(tracker.distanceMeters, 0);
     });
   });
 

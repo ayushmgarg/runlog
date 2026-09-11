@@ -110,6 +110,33 @@ class _RouteMapState extends State<RouteMap> {
               // route still draws on the empty canvas underneath.
               errorTileCallback: (_, _, _) {},
             ),
+            // Gap connectors, drawn under the route itself.
+            //
+            // A segment break means GPS was lost, so the ground between the two
+            // ends was never recorded. Leaving a hole reads as a broken app, but
+            // drawing a solid line there would claim a path that was never
+            // measured. A dashed, dimmed line says "we got from here to there,
+            // but this part is not data" — and no distance is credited for it.
+            PolylineLayer(
+              polylines: [
+                for (var i = 1; i < segments.length; i++)
+                  Polyline(
+                    points: [
+                      LatLng(
+                        segments[i - 1].last.latitude,
+                        segments[i - 1].last.longitude,
+                      ),
+                      LatLng(
+                        segments[i].first.latitude,
+                        segments[i].first.longitude,
+                      ),
+                    ],
+                    strokeWidth: 3,
+                    color: RunTheme.route.withValues(alpha: 0.45),
+                    pattern: StrokePattern.dashed(segments: const [12, 10]),
+                  ),
+              ],
+            ),
             PolylineLayer(
               polylines: [
                 for (final segment in segments)

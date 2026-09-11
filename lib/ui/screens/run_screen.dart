@@ -150,7 +150,6 @@ class _RunScreenState extends State<RunScreen> {
         const SizedBox(height: 28),
         _LocationStatus(controller: _c, ready: ready),
         const Spacer(),
-        _SimulationToggle(controller: _c),
       ],
     );
   }
@@ -169,7 +168,10 @@ class _RunScreenState extends State<RunScreen> {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             StatusPill(status: _c.status),
-            GpsBadge(quality: m.gpsQuality, simulated: _c.simulationEnabled),
+            GpsBadge(
+              quality: m.gpsQuality,
+              estimatingFromSteps: m.isEstimatingFromSteps,
+            ),
           ],
         ),
         SizedBox(height: mapOpen ? 12 : 24),
@@ -413,13 +415,6 @@ class _LocationStatus extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (controller.simulationEnabled) {
-      return const Text(
-        'Simulated location is on',
-        style: TextStyle(color: RunTheme.route, fontSize: 13),
-      );
-    }
-
     final (icon, text, color) = switch (controller.availability) {
       LocationAvailability.ready => (
         Icons.gps_fixed,
@@ -462,54 +457,6 @@ class _LocationStatus extends StatelessWidget {
           ),
         ],
       ],
-    );
-  }
-}
-
-/// The demo switch. Labelled as a demo, disabled mid-run, and impossible to
-/// mistake for a real recording once running (the GPS badge reads SIMULATED).
-class _SimulationToggle extends StatelessWidget {
-  const _SimulationToggle({required this.controller});
-
-  final RunController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
-      decoration: BoxDecoration(
-        color: RunTheme.surface,
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Row(
-        children: [
-          const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Simulate a run',
-                  style: TextStyle(
-                    color: RunTheme.textPrimary,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                SizedBox(height: 2),
-                Text(
-                  'Replays a scripted lap with a stop and a signal drop, '
-                  'for testing indoors.',
-                  style: TextStyle(color: RunTheme.textSecondary, fontSize: 11),
-                ),
-              ],
-            ),
-          ),
-          Switch(
-            value: controller.simulationEnabled,
-            onChanged: controller.setSimulation,
-          ),
-        ],
-      ),
     );
   }
 }

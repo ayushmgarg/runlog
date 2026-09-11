@@ -55,22 +55,28 @@ class StatusPill extends StatelessWidget {
 /// A tracker that silently under-reports during a signal loss is worse than one
 /// that says so. Tapping explains what "weak" means for the distance.
 class GpsBadge extends StatelessWidget {
-  const GpsBadge({super.key, required this.quality, this.simulated = false});
+  const GpsBadge({
+    super.key,
+    required this.quality,
+    this.estimatingFromSteps = false,
+  });
 
   final GpsQuality quality;
 
-  /// Demo mode is labelled unmistakably: nobody should mistake a scripted lap
-  /// for a recorded one.
-  final bool simulated;
+  /// Distance is coming from the step counter because GPS is unusable. Said
+  /// plainly, because an estimate must not look like a measurement.
+  final bool estimatingFromSteps;
 
   @override
   Widget build(BuildContext context) {
-    if (simulated) {
-      return _Badge(
-        color: RunTheme.route,
-        icon: Icons.science_outlined,
-        label: 'SIMULATED',
-        tooltip: 'Location is being simulated for demo purposes.',
+    if (estimatingFromSteps) {
+      return const _Badge(
+        color: RunTheme.paused,
+        icon: Icons.directions_walk,
+        label: 'STEPS',
+        tooltip:
+            'No GPS signal, so distance and pace are being estimated from '
+            'your step count. Less precise than GPS, but the run keeps going.',
       );
     }
 

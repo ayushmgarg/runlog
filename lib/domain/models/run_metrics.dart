@@ -14,6 +14,7 @@ class RunMetrics {
     required this.elapsed,
     required this.currentSpeedMps,
     required this.pointCount,
+    this.isEstimatingFromSteps = false,
   });
 
   final RunStatus status;
@@ -27,6 +28,11 @@ class RunMetrics {
   final double? currentSpeedMps;
 
   final int pointCount;
+
+  /// Distance is currently coming from the step counter because GPS is not
+  /// usable. The UI says so: an estimate must not be presented as a
+  /// measurement.
+  final bool isEstimatingFromSteps;
 
   static const empty = RunMetrics(
     status: RunStatus.idle,

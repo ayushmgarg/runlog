@@ -5,8 +5,8 @@ import 'package:flutter/widgets.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../data/geolocator_location_provider.dart';
+import '../data/pedometer_step_provider.dart';
 import '../data/run_repository.dart';
-import '../data/simulated_location_provider.dart';
 import '../domain/location_provider.dart';
 import '../domain/models/location_sample.dart';
 import '../domain/models/run_metrics.dart';
@@ -14,6 +14,7 @@ import '../domain/models/run_record.dart';
 import '../domain/models/run_status.dart';
 import '../domain/models/track_point.dart';
 import '../domain/run_tracker.dart';
+import '../domain/step_provider.dart';
 
 /// Everything the app knows, in one listenable object.
 ///
@@ -26,15 +27,21 @@ import '../domain/run_tracker.dart';
 /// permissions, the position subscription, the repaint ticker, persistence and
 /// app lifecycle. The tracker stays pure so it stays testable.
 class RunController extends ChangeNotifier with WidgetsBindingObserver {
-  RunController({RunRepository? repository, LocationProvider? provider})
-    : _repository = repository ?? RunRepository(),
-      _provider = provider ?? GeolocatorLocationProvider();
+  RunController({
+    RunRepository? repository,
+    LocationProvider? provider,
+    StepProvider? stepProvider,
+  }) : _repository = repository ?? RunRepository(),
+       _provider = provider ?? GeolocatorLocationProvider(),
+       _stepProvider = stepProvider ?? PedometerStepProvider();
 
   final RunRepository _repository;
-  LocationProvider _provider;
+  final LocationProvider _provider;
+  final StepProvider _stepProvider;
 
   RunTracker _tracker = RunTracker();
   StreamSubscription<LocationSample>? _positionSubscription;
+  StreamSubscription<StepSample>? _stepSubscription;
   Timer? _ticker;
   Timer? _snapshotTimer;
 
@@ -45,7 +52,7 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
   /// A run recovered from disk that the user has not yet dealt with.
   RunTracker? _recoveredRun;
 
-  bool _simulationEnabled = false;
+  bool _stepFallbackAvailable = false;
   bool _mapExpanded = false;
   bool _busy = false;
   String? _error;
@@ -60,7 +67,9 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
   RunRecord? get lastFinishedRun => _lastFinishedRun;
   RunTracker? get recoveredRun => _recoveredRun;
   bool get hasRecoveredRun => _recoveredRun != null;
-  bool get simulationEnabled => _simulationEnabled;
+  /// Whether the step counter is readable, so the UI can explain when distance
+  /// will keep working without GPS and when it will not.
+  bool get stepFallbackAvailable => _stepFallbackAvailable;
   bool get mapExpanded => _mapExpanded;
   bool get busy => _busy;
   String? get error => _error;
@@ -73,6 +82,7 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> init() async {
     WidgetsBinding.instance.addObserver(this);
     _availability = await _provider.checkAvailability();
+    _stepFallbackAvailable = await _stepProvider.isAvailable();
     _history = await _repository.loadRuns();
     await _restoreUnfinishedRun();
     notifyListeners();
@@ -99,23 +109,6 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> openLocationSettings() => _provider.openLocationSettings();
 
-  /// Swaps the real GPS for the scripted demo route (and back).
-  ///
-  /// Only offered while idle: changing the source of truth underneath a run in
-  /// progress would produce a run that is half real and half fiction.
-  Future<void> setSimulation(bool enabled) async {
-    if (_simulationEnabled == enabled) return;
-    if (_tracker.status.isInProgress) return;
-    await _stopListening();
-    await _provider.dispose();
-    _simulationEnabled = enabled;
-    _provider = enabled
-        ? SimulatedLocationProvider()
-        : GeolocatorLocationProvider();
-    _availability = await _provider.checkAvailability();
-    notifyListeners();
-  }
-
   void setMapExpanded(bool expanded) {
     if (_mapExpanded == expanded) return;
     _mapExpanded = expanded;
@@ -138,6 +131,10 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
         _error = _messageFor(_availability);
         return false;
       }
+
+      // Asked for at the same time as location, because it is what keeps
+      // distance alive when location stops working. A refusal is not fatal.
+      _stepFallbackAvailable = await _stepProvider.requestPermission();
 
       _tracker = RunTracker();
       _tracker.start();
@@ -279,11 +276,27 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
       },
       cancelOnError: false,
     );
+
+    if (_stepFallbackAvailable) {
+      await _stepSubscription?.cancel();
+      _stepSubscription = _stepProvider.stepStream().listen(
+        (sample) {
+          // The engine decides whether these steps count as distance or only
+          // calibrate the stride; the controller just delivers them.
+          _tracker.addStepSample(sample);
+          notifyListeners();
+        },
+        onError: (Object _) {},
+        cancelOnError: false,
+      );
+    }
   }
 
   Future<void> _stopListening() async {
     await _positionSubscription?.cancel();
     _positionSubscription = null;
+    await _stepSubscription?.cancel();
+    _stepSubscription = null;
   }
 
   /// 1 Hz repaint only. The displayed duration is computed from the wall clock,
@@ -366,7 +379,9 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _stopTicker();
     _positionSubscription?.cancel();
+    _stepSubscription?.cancel();
     _provider.dispose();
+    _stepProvider.dispose();
     if (!kIsWeb) _enableWakelock(false);
     super.dispose();
   }

@@ -14,10 +14,16 @@
     <!-- Android 13+: required to show the tracking notification. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
+    <!-- Hardware step counter, used to keep distance and pace alive when GPS
+         is unavailable (indoors, tunnels, location switched off). Optional:
+         refusing it costs the fallback, not the app. -->
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION"/>
+
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:name="android.permission.INTERNET"/>
 
     <uses-feature android:name="android.hardware.location.gps" android:required="false"/>
+    <uses-feature android:name="android.hardware.sensor.stepcounter" android:required="false"/>
 
     <application
         android:label="RUN"

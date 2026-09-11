@@ -5,6 +5,7 @@ import 'models/location_sample.dart';
 import 'models/run_metrics.dart';
 import 'models/run_status.dart';
 import 'models/track_point.dart';
+import 'step_provider.dart';
 import 'tracker_config.dart';
 
 /// Reads the wall clock. Injected so tests control time exactly instead of
@@ -38,6 +39,20 @@ enum SampleOutcome {
 
   /// The run is not active, so samples are not recorded at all.
   ignoredNotActive,
+}
+
+/// A point on the distance timeline: how far the run had gone, and when.
+///
+/// Kept separate from the route because distance can advance without a
+/// position — when GPS is unavailable, the step counter still moves it. Live
+/// pace and speed are derived from this timeline rather than from the route,
+/// so they keep working through a signal blackout.
+class _DistanceMark {
+  const _DistanceMark(this.at, this.cumulativeMeters, this.segment);
+
+  final DateTime at;
+  final double cumulativeMeters;
+  final int segment;
 }
 
 /// The whole tracking engine: state machine, GPS filter chain, and metrics.
@@ -88,6 +103,31 @@ class RunTracker {
   /// [TrackerConfig.maxConsecutiveRejections].
   int _consecutiveRejections = 0;
 
+  /// Distance over time, from whichever source produced it. Pruned to a little
+  /// more than the pace window, so it stays O(window) however long the run is.
+  final List<_DistanceMark> _marks = <_DistanceMark>[];
+
+  /// Last raw pedometer reading, so deltas can be taken.
+  StepSample? _lastStep;
+
+  /// When a step was last counted, used to tell "no pedometer data" from
+  /// "standing still".
+  DateTime? _lastStepAt;
+
+  /// Metres of this run credited to the step counter rather than to GPS.
+  double _stepMeters = 0;
+
+  /// Steps, and the GPS metres measured over the *same* intervals, while the
+  /// signal was good. Their ratio is this runner's stride.
+  int _calibrationSteps = 0;
+  double _calibrationMeters = 0;
+
+  /// GPS metres at the previous calibration sample. Only the distance between
+  /// consecutive step readings may be paired with the steps between them —
+  /// crediting the whole run's GPS distance against a handful of steps would
+  /// produce an absurd stride.
+  double _calibrationCursor = 0;
+
   // ----------------------------------------------------------------- getters
 
   RunStatus get status => _status;
@@ -95,6 +135,38 @@ class RunTracker {
   double get distanceMeters => _distanceMeters;
   List<TrackPoint> get route => List.unmodifiable(_route);
   int get segmentCount => _route.isEmpty ? 0 : _route.last.segment + 1;
+
+  /// Metres of this run that came from the step counter, not from GPS.
+  double get stepMeters => _stepMeters;
+
+  /// The stride used to convert steps into distance.
+  ///
+  /// Measured against GPS whenever the signal is good, so the fallback gets
+  /// more accurate the longer the run goes before the signal drops. Falls back
+  /// to a population average until there is enough evidence, and is clamped so
+  /// a polluted sample cannot produce a nonsense stride.
+  double get strideMeters {
+    if (_calibrationSteps < config.minCalibrationSteps) {
+      return config.defaultStrideMeters;
+    }
+    final measured = _calibrationMeters / _calibrationSteps;
+    return measured.clamp(config.minStrideMeters, config.maxStrideMeters);
+  }
+
+  /// True when distance is currently being estimated from steps because GPS is
+  /// not usable. Surfaced in the UI: an estimate should not look like a
+  /// measurement.
+  bool get isEstimatingFromSteps {
+    if (!_status.isActive) return false;
+    if (gpsQuality == GpsQuality.good) return false;
+    return _stepsAreLive(_clock());
+  }
+
+  bool _stepsAreLive(DateTime now) {
+    final last = _lastStepAt;
+    return last != null &&
+        now.difference(last) <= config.gpsStaleThreshold;
+  }
 
   /// Active running time. Derived from the wall clock rather than counted
   /// ticks, so a throttled timer or a backgrounded app cannot lose seconds.
@@ -129,43 +201,116 @@ class RunTracker {
     elapsed: elapsed,
     currentSpeedMps: _currentSpeedMps(),
     pointCount: _route.length,
+    isEstimatingFromSteps: isEstimatingFromSteps,
   );
 
   /// Rolling-window speed in m/s, or null when it cannot be known.
   ///
-  /// The window *ends at now*, not at the last recorded point, so standing
-  /// still decays the reading toward zero instead of freezing it at the last
-  /// running speed. The GPS chip's own speed field is ignored: it is
-  /// inconsistent across devices and absent from simulated traces.
+  /// Computed from the distance timeline rather than from the route, so it
+  /// survives a GPS blackout on step data alone. The window *ends at now*, not
+  /// at the last recorded mark, so stopping decays the reading toward zero
+  /// instead of freezing it at the last running speed. The GPS chip's own
+  /// speed field is ignored: it is inconsistent across devices and absent from
+  /// synthetic traces.
   double? _currentSpeedMps() {
     if (_status != RunStatus.active) return null;
-    if (_route.isEmpty) return null;
-    if (gpsQuality == GpsQuality.weak) return null;
+    if (_marks.isEmpty) return null;
 
     final now = _clock();
+    // Nothing is reporting movement: say so, rather than showing a stale
+    // number or a zero that claims the runner has stopped.
+    if (gpsQuality != GpsQuality.good && !_stepsAreLive(now)) return null;
+
     final windowStart = now.subtract(config.paceWindow);
+    final segment = _marks.last.segment;
 
-    // Walk back from the end: the window is bounded, so this is O(window) and
-    // not O(route), no matter how long the run gets.
-    var index = _route.length - 1;
-    while (index > 0 && _route[index - 1].timestamp.isAfter(windowStart)) {
+    // Walk back through the current segment only. Marks from before a pause
+    // must never enter the window, or resuming would show the pace the runner
+    // had when they stopped rather than the one they just set off at.
+    var index = _marks.length - 1;
+    while (index > 0 &&
+        _marks[index - 1].segment == segment &&
+        _marks[index - 1].at.isAfter(windowStart)) {
       index--;
     }
-    // Include the point just before the window so the first metres inside it
-    // are attributed, unless that point belongs to a previous segment.
-    if (index > 0 && _route[index - 1].segment == _route[index].segment) {
-      index--;
-    }
+    // Include the mark just before the window so the metres covered at its
+    // start are attributed, as long as it belongs to this segment.
+    if (index > 0 && _marks[index - 1].segment == segment) index--;
 
-    final start = _route[index];
-    final windowSeconds =
-        now.difference(start.timestamp).inMilliseconds / 1000.0;
+    final first = _marks[index];
+    if (first.segment != segment) return null;
+
+    final windowSeconds = now.difference(first.at).inMilliseconds / 1000.0;
     if (windowSeconds < config.minPaceWindow.inMilliseconds / 1000.0) {
       return null;
     }
 
-    final metres = _route.last.cumulativeMeters - start.cumulativeMeters;
+    final metres = _marks.last.cumulativeMeters - first.cumulativeMeters;
     return math.max(0.0, metres / windowSeconds);
+  }
+
+  /// Records where the run had got to at [at], and drops marks that have aged
+  /// out of the pace window so this list cannot grow with the run.
+  void _mark(DateTime at) {
+    _marks.add(_DistanceMark(at, _distanceMeters, _segment));
+
+    final cutoff = at.subtract(config.paceWindow * 3);
+    var drop = 0;
+    // Keep one mark older than the window: it is the window's start point.
+    while (drop + 1 < _marks.length && _marks[drop + 1].at.isBefore(cutoff)) {
+      drop++;
+    }
+    if (drop > 0) _marks.removeRange(0, drop);
+  }
+
+  // ------------------------------------------------------------ step counter
+
+  /// Feeds one pedometer reading.
+  ///
+  /// Steps are the fallback, never the primary source: while GPS is good they
+  /// only calibrate the stride length, and the distance they would imply is
+  /// discarded. The moment GPS stops being usable they take over, which is what
+  /// keeps distance and pace alive in a tunnel, indoors, or with location
+  /// switched off entirely.
+  ///
+  /// Returns the metres credited by this sample, which is zero whenever GPS is
+  /// doing the measuring.
+  double addStepSample(StepSample sample) {
+    if (_status != RunStatus.active) return 0;
+
+    final previous = _lastStep;
+    _lastStep = sample;
+
+    // First reading of the run, or a counter that went backwards because the
+    // device rebooted: take it as the new baseline and credit nothing.
+    if (previous == null || sample.cumulativeSteps < previous.cumulativeSteps) {
+      return 0;
+    }
+
+    final steps = sample.cumulativeSteps - previous.cumulativeSteps;
+    if (steps <= 0) return 0;
+    _lastStepAt = sample.timestamp;
+
+    final gpsMeters = _distanceMeters - _stepMeters;
+
+    if (gpsQuality == GpsQuality.good) {
+      // GPS is measuring; these steps only teach us this runner's stride.
+      // Pair them with the GPS distance covered since the previous reading.
+      _calibrationSteps += steps;
+      _calibrationMeters += gpsMeters - _calibrationCursor;
+      _calibrationCursor = gpsMeters;
+      return 0;
+    }
+
+    // GPS is not usable. Skip the cursor past this stretch so the distance
+    // estimated here is never later paired with steps as if GPS had measured it.
+    _calibrationCursor = gpsMeters;
+
+    final metres = steps * strideMeters;
+    _distanceMeters += metres;
+    _stepMeters += metres;
+    _mark(sample.timestamp);
+    return metres;
   }
 
   // ----------------------------------------------------------- state machine
@@ -184,7 +329,10 @@ class RunTracker {
     _distanceMeters = 0;
     _segment = 0;
     _route.clear();
+    _marks.clear();
+    _resetStepState();
     _clearFilterState();
+    _mark(now);
   }
 
   /// active to paused. Banks the segment and drops the anchor, so movement
@@ -201,8 +349,13 @@ class RunTracker {
   void resume() {
     if (_status != RunStatus.paused) return;
     _status = RunStatus.active;
-    _segmentStartedAt = _clock();
+    final now = _clock();
+    _segmentStartedAt = now;
     _segment++;
+    // Seed the new segment so live pace starts from this moment. Without it
+    // the first seconds after resuming would report the pace the runner had
+    // when they stopped.
+    _mark(now);
   }
 
   /// active or paused to finished. Terminal: further samples are ignored.
@@ -221,9 +374,20 @@ class RunTracker {
     _segmentStartedAt = null;
     _elapsedFloor = Duration.zero;
     _route.clear();
+    _marks.clear();
     _distanceMeters = 0;
     _segment = 0;
+    _resetStepState();
     _clearFilterState();
+  }
+
+  void _resetStepState() {
+    _lastStep = null;
+    _lastStepAt = null;
+    _stepMeters = 0;
+    _calibrationSteps = 0;
+    _calibrationMeters = 0;
+    _calibrationCursor = 0;
   }
 
   /// Drops everything the filter chain carries between fixes, so the next fix
@@ -235,6 +399,9 @@ class RunTracker {
     _smoothLat = null;
     _smoothLon = null;
     _consecutiveRejections = 0;
+    // Step deltas must not span a discontinuity: the next reading re-baselines.
+    _lastStep = null;
+    _calibrationCursor = _distanceMeters - _stepMeters;
   }
 
   void _bankSegment() {
@@ -375,6 +542,7 @@ class RunTracker {
   }
 
   TrackPoint _appendPoint(LocationSample sample, double cumulative) {
+    _mark(sample.timestamp);
     final point = TrackPoint(
       latitude: sample.latitude,
       longitude: sample.longitude,
