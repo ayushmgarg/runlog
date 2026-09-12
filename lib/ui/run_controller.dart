@@ -44,6 +44,11 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
   StreamSubscription<StepSample>? _stepSubscription;
   Timer? _ticker;
   Timer? _snapshotTimer;
+  Timer? _resubscribeTimer;
+
+  /// Whether the current subscription has already reported a failure, so a
+  /// retry loop cannot spam the user with the same message every few seconds.
+  bool _reportedStreamError = false;
 
   LocationAvailability _availability = LocationAvailability.notRequested;
   List<RunRecord> _history = const [];
@@ -262,6 +267,9 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
   // ------------------------------------------------------------- plumbing
 
   Future<void> _startListening() async {
+    _resubscribeTimer?.cancel();
+    _reportedStreamError = false;
+
     await _positionSubscription?.cancel();
     _positionSubscription = _provider.positionStream().listen(
       (sample) {
@@ -271,9 +279,19 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
       onError: (Object e) {
         // A stream error is a GPS-quality problem, not a reason to lose the
         // run: the badge already reports staleness, and duration keeps running.
-        _error = 'Location error: $e';
-        notifyListeners();
+        // Reported once per subscription so a retry loop cannot spam.
+        if (!_reportedStreamError) {
+          _reportedStreamError = true;
+          _error = 'Location error: $e';
+          notifyListeners();
+        }
+        _scheduleResubscribe();
       },
+      // Switching location off device-wide makes Android *end* this stream, not
+      // merely error it. Without this the run would keep its duration ticking
+      // while silently never receiving another fix, and turning GPS back on
+      // would not recover until the user paused and resumed.
+      onDone: _scheduleResubscribe,
       cancelOnError: false,
     );
 
@@ -292,7 +310,27 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  /// Re-opens the position stream a few seconds after it ended or failed.
+  ///
+  /// Only while a run is actually active: a paused or finished run has no
+  /// business holding the receiver open, and retrying forever in the background
+  /// would be a battery bug.
+  void _scheduleResubscribe() {
+    if (!_tracker.status.isActive) return;
+    if (_resubscribeTimer?.isActive ?? false) return;
+    _resubscribeTimer = Timer(const Duration(seconds: 3), () async {
+      if (!_tracker.status.isActive) return;
+      // Keeps the idle screen and the permission prompts honest if the user
+      // turned location off rather than simply losing signal.
+      _availability = await _provider.checkAvailability();
+      await _startListening();
+      notifyListeners();
+    });
+  }
+
   Future<void> _stopListening() async {
+    _resubscribeTimer?.cancel();
+    _resubscribeTimer = null;
     await _positionSubscription?.cancel();
     _positionSubscription = null;
     await _stepSubscription?.cancel();
@@ -378,6 +416,7 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _stopTicker();
+    _resubscribeTimer?.cancel();
     _positionSubscription?.cancel();
     _stepSubscription?.cancel();
     _provider.dispose();

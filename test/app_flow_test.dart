@@ -59,12 +59,20 @@ class FakeLocationProvider implements LocationProvider {
   FakeLocationProvider({this.availability = LocationAvailability.ready});
 
   LocationAvailability availability;
-  final _controller = StreamController<LocationSample>.broadcast();
+  StreamController<LocationSample> _controller =
+      StreamController<LocationSample>.broadcast();
 
   int streamRequests = 0;
   bool disposed = false;
 
   void emit(LocationSample sample) => _controller.add(sample);
+
+  /// Ends the stream, which is what Android actually does when location is
+  /// switched off device-wide — it does not merely deliver an error.
+  Future<void> endStream() async {
+    await _controller.close();
+    _controller = StreamController<LocationSample>.broadcast();
+  }
 
   @override
   Future<LocationAvailability> checkAvailability() async => availability;
@@ -307,6 +315,53 @@ void main() {
     expect(find.text('Hide map'), findsOneWidget);
 
     await stopTimers(tester);
+  });
+
+  testWidgets('a closed location stream is re-opened while the run is active', (
+    tester,
+  ) async {
+    // Reported from the field: switching location off and on again left the
+    // run ticking with no fixes for the rest of its life.
+    await tester.pumpWidget(wrap());
+    await tester.pump();
+    await tester.tap(find.text('START RUN'));
+    await settle(tester);
+    await run(tester, seconds: 5);
+    expect(provider.streamRequests, 1);
+
+    await provider.endStream();
+    await tester.pump();
+
+    // The retry is deliberately not instant; give it its backoff.
+    await tester.pump(const Duration(seconds: 4));
+    expect(
+      provider.streamRequests,
+      2,
+      reason: 'the run must re-open the stream on its own',
+    );
+
+    await stopTimers(tester);
+  });
+
+  testWidgets('a closed stream is not re-opened once the run is paused', (
+    tester,
+  ) async {
+    // The mirror image: holding the receiver open for a paused run, or
+    // retrying forever after finishing, would be a battery bug.
+    await tester.pumpWidget(wrap());
+    await tester.pump();
+    await tester.tap(find.text('START RUN'));
+    await settle(tester);
+    await run(tester, seconds: 3);
+
+    await controller.pauseRun();
+    await tester.pump();
+    final afterPause = provider.streamRequests;
+
+    await provider.endStream();
+    await tester.pump(const Duration(seconds: 6));
+
+    expect(provider.streamRequests, afterPause);
   });
 
   testWidgets('a denied permission explains itself instead of faking a run', (
