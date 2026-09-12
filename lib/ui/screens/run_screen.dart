@@ -174,6 +174,13 @@ class _RunScreenState extends State<RunScreen> {
             ),
           ],
         ),
+        if (_c.locationInterrupted) ...[
+          const SizedBox(height: 12),
+          _LocationInterruptedBanner(
+            controller: _c,
+            estimatingFromSteps: m.isEstimatingFromSteps,
+          ),
+        ],
         SizedBox(height: mapOpen ? 12 : 24),
         HeroMetric(
           value: Fmt.distanceValue(m.distanceMeters),
@@ -457,6 +464,81 @@ class _LocationStatus extends StatelessWidget {
           ),
         ],
       ],
+    );
+  }
+}
+
+/// Shown while a run is active but location has stopped delivering.
+///
+/// A standing banner rather than a transient notice, because this is a
+/// condition and not an event: it lasts until the user turns location back on,
+/// and the stream retries every few seconds. Raising a popup per retry, which
+/// is what this replaces, was unusable.
+///
+/// It does not block anything. The run continues underneath it — on steps if
+/// they are available — and the banner simply says what is happening and offers
+/// the one action that fixes it.
+class _LocationInterruptedBanner extends StatelessWidget {
+  const _LocationInterruptedBanner({
+    required this.controller,
+    required this.estimatingFromSteps,
+  });
+
+  final RunController controller;
+  final bool estimatingFromSteps;
+
+  @override
+  Widget build(BuildContext context) {
+    final blocked =
+        controller.availability == LocationAvailability.deniedForever;
+
+    final message = estimatingFromSteps
+        ? 'Location is off. Distance is being estimated from your steps.'
+        : blocked
+        ? 'Location access is blocked, so distance cannot be measured.'
+        : 'Location is off. Distance is paused until it comes back.';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+      decoration: BoxDecoration(
+        color: RunTheme.paused.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: RunTheme.paused.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.location_off_outlined,
+            size: 18,
+            color: RunTheme.paused,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(
+                color: RunTheme.textPrimary,
+                fontSize: 12,
+                height: 1.3,
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          TextButton(
+            onPressed: blocked
+                ? controller.openAppSettings
+                : controller.openLocationSettings,
+            style: TextButton.styleFrom(
+              foregroundColor: RunTheme.paused,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              minimumSize: const Size(0, 40),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: Text(blocked ? 'Settings' : 'Turn on'),
+          ),
+        ],
+      ),
     );
   }
 }

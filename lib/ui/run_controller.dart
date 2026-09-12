@@ -46,9 +46,12 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
   Timer? _snapshotTimer;
   Timer? _resubscribeTimer;
 
-  /// Whether the current subscription has already reported a failure, so a
-  /// retry loop cannot spam the user with the same message every few seconds.
-  bool _reportedStreamError = false;
+  /// The location stream has stopped delivering fixes mid-run.
+  ///
+  /// Durable state rather than a one-off message: the condition lasts until the
+  /// user fixes it, so the UI shows a standing banner. Firing a transient
+  /// notice instead meant one popup per retry, every three seconds.
+  bool _locationInterrupted = false;
 
   LocationAvailability _availability = LocationAvailability.notRequested;
   List<RunRecord> _history = const [];
@@ -78,6 +81,11 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
   bool get mapExpanded => _mapExpanded;
   bool get busy => _busy;
   String? get error => _error;
+
+  /// True while a run is active but the location stream is not delivering.
+  /// Cleared by the next fix that arrives.
+  bool get locationInterrupted =>
+      _locationInterrupted && _tracker.status.isInProgress;
 
   bool get canStart =>
       _tracker.status == RunStatus.idle && !_busy && !hasRecoveredRun;
@@ -141,6 +149,7 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
       // distance alive when location stops working. A refusal is not fatal.
       _stepFallbackAvailable = await _stepProvider.requestPermission();
 
+      _locationInterrupted = false;
       _tracker = RunTracker();
       _tracker.start();
       await _startListening();
@@ -268,30 +277,33 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> _startListening() async {
     _resubscribeTimer?.cancel();
-    _reportedStreamError = false;
 
     await _positionSubscription?.cancel();
     _positionSubscription = _provider.positionStream().listen(
       (sample) {
+        // Fixes are flowing again, so whatever was wrong no longer is.
+        if (_locationInterrupted) _locationInterrupted = false;
         _tracker.addSample(sample);
         notifyListeners();
       },
-      onError: (Object e) {
-        // A stream error is a GPS-quality problem, not a reason to lose the
-        // run: the badge already reports staleness, and duration keeps running.
-        // Reported once per subscription so a retry loop cannot spam.
-        if (!_reportedStreamError) {
-          _reportedStreamError = true;
-          _error = 'Location error: $e';
-          notifyListeners();
-        }
+      onError: (Object _) {
+        // Not surfaced as a message. A stream error is a condition, not an
+        // event: it persists until the user turns location back on, and the
+        // retry loop would otherwise raise the same notice every few seconds.
+        // The run screen shows a standing banner instead.
+        _locationInterrupted = true;
+        notifyListeners();
         _scheduleResubscribe();
       },
       // Switching location off device-wide makes Android *end* this stream, not
       // merely error it. Without this the run would keep its duration ticking
       // while silently never receiving another fix, and turning GPS back on
       // would not recover until the user paused and resumed.
-      onDone: _scheduleResubscribe,
+      onDone: () {
+        _locationInterrupted = true;
+        notifyListeners();
+        _scheduleResubscribe();
+      },
       cancelOnError: false,
     );
 
