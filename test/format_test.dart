@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:plexqo_run/ui/format.dart';
+import 'package:runlog/ui/format.dart';
 
 void main() {
   group('distance', () {
@@ -77,14 +77,8 @@ void main() {
 
   group('date', () {
     test('renders a fixed, locale-free format', () {
-      expect(
-        Fmt.dateTime(DateTime(2026, 9, 11, 7, 12)),
-        'Fri 11 Sep, 07:12',
-      );
-      expect(
-        Fmt.dateTime(DateTime(2026, 1, 5, 19, 4)),
-        'Mon 5 Jan, 19:04',
-      );
+      expect(Fmt.dateTime(DateTime(2026, 9, 11, 7, 12)), 'Fri 11 Sep, 07:12');
+      expect(Fmt.dateTime(DateTime(2026, 1, 5, 19, 4)), 'Mon 5 Jan, 19:04');
     });
   });
 
@@ -97,10 +91,7 @@ void main() {
         'Duration 14 minutes 8 seconds',
       );
       expect(Fmt.paceSemantics(null), 'Pace not available yet');
-      expect(
-        Fmt.paceSemantics(342),
-        'Pace 5 minutes 42 seconds per kilometre',
-      );
+      expect(Fmt.paceSemantics(342), 'Pace 5 minutes 42 seconds per kilometre');
     });
   });
 }

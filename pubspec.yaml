@@ -1,5 +1,5 @@
-name: plexqo_run
-description: "RUN — a simple, reliable running tracker: start, track, pause/resume, finish, review."
+name: runlog
+description: "A running tracker: live distance, pace and speed, pause and resume, and your route on a map."
 publish_to: 'none'
 version: 0.1.0
 

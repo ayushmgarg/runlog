@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-
 import '../../domain/location_provider.dart';
 import '../../domain/models/run_status.dart';
 import '../format.dart';
@@ -11,9 +10,6 @@ import '../widgets/status_widgets.dart';
 import 'history_screen.dart';
 import 'summary_screen.dart';
 
-/// The one screen a run happens on: idle, active and paused are states of the
-/// same screen rather than separate routes, so nothing is ever pushed or popped
-/// underneath a run in progress.
 class RunScreen extends StatefulWidget {
   const RunScreen({super.key, required this.controller});
 
@@ -56,8 +52,6 @@ class _RunScreenState extends State<RunScreen> {
       builder: (context, _) {
         final inProgress = _c.status.isInProgress;
         return PopScope(
-          // Leaving the app mid-run is almost always a misfire, and the cost of
-          // getting it wrong is the whole run.
           canPop: !inProgress,
           onPopInvokedWithResult: (didPop, _) {
             if (!didPop) _confirmDiscard();
@@ -226,9 +220,6 @@ class _RunScreenState extends State<RunScreen> {
           ],
         ),
         const SizedBox(height: 16),
-        // The map is additive, never a mode: the metrics above stay on screen
-        // whether it is open or shut, and it is unmounted while collapsed so it
-        // costs nothing by default.
         _MapSection(controller: _c),
         const SizedBox(height: 16),
         Row(
@@ -276,7 +267,6 @@ class _RunScreenState extends State<RunScreen> {
     }
   }
 
-  /// Starts a steps-only run after saying plainly what that costs.
   Future<void> _startWithoutLocation() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -337,7 +327,6 @@ class _RunScreenState extends State<RunScreen> {
     }
   }
 
-  /// Finishing is irreversible, so it asks. Pausing is not, so it does not.
   Future<void> _confirmFinish() async {
     final m = _c.metrics;
     final confirmed = await showDialog<bool>(
@@ -362,7 +351,6 @@ class _RunScreenState extends State<RunScreen> {
       ),
     );
     if (confirmed != true) return;
-
     final record = await _c.finishRun();
     if (record == null || !mounted) return;
     await Navigator.of(context).push(
@@ -499,8 +487,6 @@ class _LocationStatus extends StatelessWidget {
               onPressed: controller.requestPermission,
               child: const Text('Grant location access'),
             ),
-          // Someone standing at the door about to run should not be told no.
-          // A steps-only run is a worse measurement, not a broken one.
           TextButton(
             onPressed: onStartWithoutLocation,
             style: TextButton.styleFrom(
@@ -514,16 +500,6 @@ class _LocationStatus extends StatelessWidget {
   }
 }
 
-/// Shown while a run is active but location has stopped delivering.
-///
-/// A standing banner rather than a transient notice, because this is a
-/// condition and not an event: it lasts until the user turns location back on,
-/// and the stream retries every few seconds. Raising a popup per retry, which
-/// is what this replaces, was unusable.
-///
-/// It does not block anything. The run continues underneath it — on steps if
-/// they are available — and the banner simply says what is happening and offers
-/// the one action that fixes it.
 class _LocationInterruptedBanner extends StatelessWidget {
   const _LocationInterruptedBanner({
     required this.controller,
@@ -589,11 +565,6 @@ class _LocationInterruptedBanner extends StatelessWidget {
   }
 }
 
-/// Offered when the app restarts to find a run that was never finished.
-///
-/// Three options, because all three are legitimate: the runner may still be
-/// mid-run, may have finished long ago, or may not want the run at all. Picking
-/// one for them would be guessing with their data.
 class _RecoveryBanner extends StatelessWidget {
   const _RecoveryBanner({required this.controller});
 
@@ -633,10 +604,7 @@ class _RecoveryBanner extends StatelessWidget {
             '${Fmt.distance(recovered.distanceMeters)} · '
             '${Fmt.duration(recovered.elapsed)} — recovered after the app '
             'closed.',
-            style: const TextStyle(
-              color: RunTheme.textSecondary,
-              fontSize: 12,
-            ),
+            style: const TextStyle(color: RunTheme.textSecondary, fontSize: 12),
           ),
           const SizedBox(height: 10),
           Row(

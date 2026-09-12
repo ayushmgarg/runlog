@@ -3,12 +3,6 @@ import 'run_metrics.dart';
 import 'run_status.dart';
 import 'track_point.dart';
 
-/// A finished run, as stored on disk and shown on the summary screen.
-///
-/// Holds the *simplified* route: full fidelity matters while measuring, but a
-/// saved run only has to be drawn, and drawing 3600 points is a waste of memory
-/// for a line that looks identical with 400. Distance is carried as a value, so
-/// it is never re-derived from the simplified geometry.
 class RunRecord {
   const RunRecord({
     required this.id,
@@ -23,17 +17,11 @@ class RunRecord {
   final DateTime startedAt;
   final DateTime endedAt;
   final double distanceMeters;
-
-  /// Active time only, excluding pauses.
   final Duration duration;
-
   final List<TrackPoint> route;
-
   double get distanceKm => distanceMeters / 1000.0;
-
   bool get hasRoute => route.length >= 2;
 
-  /// Seconds per kilometre, or null for a run too short to characterise.
   double? get averagePaceSecondsPerKm {
     if (distanceMeters < 1 || duration == Duration.zero) return null;
     return duration.inMilliseconds / 1000.0 / (distanceMeters / 1000.0);
@@ -45,7 +33,6 @@ class RunRecord {
     return 3600.0 / pace;
   }
 
-  /// Builds a record from a finished tracker's numbers.
   factory RunRecord.fromRun({
     required DateTime startedAt,
     required DateTime endedAt,

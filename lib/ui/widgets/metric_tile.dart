@@ -1,11 +1,6 @@
 import 'package:flutter/material.dart';
-
 import '../theme.dart';
 
-/// The hero metric: distance, as big as the screen allows.
-///
-/// Sized to be readable at arm's length while moving, which is the only reading
-/// distance this screen ever gets.
 class HeroMetric extends StatelessWidget {
   const HeroMetric({
     super.key,
@@ -19,13 +14,7 @@ class HeroMetric extends StatelessWidget {
   final String value;
   final String unit;
   final String semanticsLabel;
-
-  /// Paused runs are dimmed so the state is readable from a glance, without
-  /// relying on colour alone.
   final bool dimmed;
-
-  /// Shrinks one step when the live map is expanded — the metrics stay on
-  /// screen, they just make room.
   final bool compact;
 
   @override
@@ -44,9 +33,6 @@ class HeroMetric extends StatelessWidget {
               child: Text(
                 value,
                 style: TextStyle(
-                  // The floor matters: with a large system font scale this must
-                  // still fit, and with a small one it must not shrink to
-                  // nothing.
                   fontSize: compact ? 64 : 96,
                   height: 1,
                   fontWeight: FontWeight.w300,
@@ -72,7 +58,6 @@ class HeroMetric extends StatelessWidget {
   }
 }
 
-/// One secondary metric: duration, pace or speed.
 class MetricTile extends StatelessWidget {
   const MetricTile({
     super.key,
@@ -86,10 +71,7 @@ class MetricTile extends StatelessWidget {
   final String value;
   final String label;
   final String semanticsLabel;
-
-  /// Small line underneath, e.g. the average behind a live value.
   final String? caption;
-
   final bool dimmed;
 
   @override
@@ -144,7 +126,6 @@ class MetricTile extends StatelessWidget {
   }
 }
 
-/// A stat on the summary screen: same information, no live-value framing.
 class SummaryStat extends StatelessWidget {
   const SummaryStat({
     super.key,

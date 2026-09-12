@@ -1,20 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-
 import '../../domain/geo.dart';
 import '../../domain/models/track_point.dart';
 import '../theme.dart';
 
-/// Draws a route on OpenStreetMap tiles.
-///
-/// One widget serves both uses: the summary map (fit to the whole route) and
-/// the live map (following the runner). OSM rather than Google Maps so there is
-/// no API key for a reviewer to provision and no Play-Services dependency.
-///
-/// The route is drawn one polyline **per segment**. That is the whole point of
-/// segments: a pause or a signal blackout must appear as a break in the line,
-/// never as a straight shortcut across ground nobody covered.
 class RouteMap extends StatefulWidget {
   const RouteMap({
     super.key,
@@ -25,10 +15,7 @@ class RouteMap extends StatefulWidget {
   });
 
   final List<TrackPoint> route;
-
-  /// Live mode: keep the latest position in view as it moves.
   final bool follow;
-
   final bool showEndpoints;
   final bool interactive;
 
@@ -39,20 +26,8 @@ class RouteMap extends StatefulWidget {
 class _RouteMapState extends State<RouteMap> {
   final MapController _controller = MapController();
   bool _ready = false;
-
-  /// At least one tile failed to load, which in practice means there was no
-  /// network when the map was first shown.
   bool _tilesFailed = false;
-
-  /// Bumped to force a fresh tile layer.
-  ///
-  /// flutter_map does not retry a tile it has already failed, so turning the
-  /// network on after the map has given up leaves it permanently blank. A new
-  /// key rebuilds the layer, which re-requests every tile.
   int _tileEpoch = 0;
-
-  /// Set once the user pans or zooms: following stops fighting them for
-  /// control until they ask for it back.
   bool _userMoved = false;
 
   @override
@@ -61,8 +36,6 @@ class _RouteMapState extends State<RouteMap> {
     if (!widget.follow || !_ready || _userMoved) return;
     final last = widget.route.isEmpty ? null : widget.route.last;
     if (last == null) return;
-    // Jump rather than animate: an animation loop running for an hour is a
-    // battery cost with nothing to show for it.
     _controller.move(
       LatLng(last.latitude, last.longitude),
       _controller.camera.zoom,
@@ -72,7 +45,6 @@ class _RouteMapState extends State<RouteMap> {
   @override
   Widget build(BuildContext context) {
     if (widget.route.isEmpty) return const _NoRoute();
-
     final segments = Geo.splitBySegment(widget.route);
     final bounds = Geo.bounds(widget.route)!;
     final (south, west, north, east) = bounds;
@@ -116,20 +88,10 @@ class _RouteMapState extends State<RouteMap> {
               key: ValueKey<int>(_tileEpoch),
               urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
               // OSM's tile policy requires an identifying user agent.
-              userAgentPackageName: 'com.plexqo.plexqo_run',
+              userAgentPackageName: 'com.runlog.app',
               maxNativeZoom: 19,
-              // A missing tile is a network problem, not a data problem: the
-              // route still draws on the empty canvas underneath. Noting the
-              // failure lets the user ask for a retry once they have signal.
               errorTileCallback: (_, _, _) => _noteTileFailure(),
             ),
-            // Gap connectors, drawn under the route itself.
-            //
-            // A segment break means GPS was lost, so the ground between the two
-            // ends was never recorded. Leaving a hole reads as a broken app, but
-            // drawing a solid line there would claim a path that was never
-            // measured. A dashed, dimmed line says "we got from here to there,
-            // but this part is not data" — and no distance is credited for it.
             PolylineLayer(
               polylines: [
                 for (var i = 1; i < segments.length; i++)
@@ -156,7 +118,8 @@ class _RouteMapState extends State<RouteMap> {
                   if (segment.length >= 2)
                     Polyline(
                       points: [
-                        for (final p in segment) LatLng(p.latitude, p.longitude),
+                        for (final p in segment)
+                          LatLng(p.latitude, p.longitude),
                       ],
                       strokeWidth: 5,
                       color: RunTheme.route,
@@ -206,7 +169,6 @@ class _RouteMapState extends State<RouteMap> {
     );
   }
 
-  /// Called from tile loading, so the rebuild is deferred to after this frame.
   void _noteTileFailure() {
     if (_tilesFailed) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -229,18 +191,15 @@ class _RouteMapState extends State<RouteMap> {
       decoration: BoxDecoration(
         color: color,
         shape: BoxShape.circle,
-        border: Border.all(color: Colors.black.withValues(alpha: 0.6), width: 2),
+        border: Border.all(
+          color: Colors.black.withValues(alpha: 0.6),
+          width: 2,
+        ),
       ),
     ),
   );
 }
 
-/// Offered when tiles could not be fetched.
-///
-/// The map is the only part of the app that needs a network, and nothing about
-/// the recorded run depends on it — so this is a quiet, optional affordance
-/// rather than an error. The route is already drawn underneath on the plain
-/// canvas; this just fetches the streets once there is signal.
 class _RetryTiles extends StatelessWidget {
   const _RetryTiles({required this.onRetry});
 
@@ -283,8 +242,6 @@ class _RetryTiles extends StatelessWidget {
   }
 }
 
-/// Shown when a run has no usable route. An empty state that says why beats a
-/// blank grey rectangle that looks broken.
 class _NoRoute extends StatelessWidget {
   const _NoRoute();
 

@@ -1,15 +1,9 @@
 import 'package:flutter/material.dart';
-
 import '../format.dart';
 import '../run_controller.dart';
 import '../theme.dart';
 import 'summary_screen.dart';
 
-/// Saved runs, newest first.
-///
-/// Not a feature so much as a consequence: a finished run has to be reachable
-/// again after the summary screen is dismissed, and a list is the smallest way
-/// to do that.
 class HistoryScreen extends StatelessWidget {
   const HistoryScreen({super.key, required this.controller});
 

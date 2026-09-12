@@ -1,13 +1,17 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:plexqo_run/domain/geo.dart';
-import 'package:plexqo_run/domain/models/track_point.dart';
-
+import 'package:runlog/domain/geo.dart';
+import 'package:runlog/domain/models/track_point.dart';
 import 'helpers.dart';
 
 void main() {
   final t0 = DateTime.utc(2026, 9, 11, 7, 0, 0);
 
-  TrackPoint point(double north, double east, {int segment = 0, int second = 0}) {
+  TrackPoint point(
+    double north,
+    double east, {
+    int segment = 0,
+    int second = 0,
+  }) {
     final s = sampleAt(
       northMeters: north,
       eastMeters: east,
@@ -76,8 +80,6 @@ void main() {
     });
 
     test('never merges across a segment break', () {
-      // Two straight legs separated by a pause must stay two legs, otherwise
-      // the summary map would draw a line the runner never took.
       final route = <TrackPoint>[
         point(0, 0, second: 0),
         point(30, 0, second: 10),
@@ -96,8 +98,6 @@ void main() {
     });
 
     test('cuts a realistic route down by an order of magnitude', () {
-      // A gently curving 1 Hz hour-long run: the point of simplification is
-      // that the summary map does not have to hold thousands of vertices.
       final route = List.generate(3600, (i) {
         final north = i * 1.5;
         final east = 20.0 * (i % 600) / 600.0;

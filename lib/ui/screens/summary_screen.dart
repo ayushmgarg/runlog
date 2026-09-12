@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-
 import '../../domain/models/run_record.dart';
 import '../format.dart';
 import '../run_controller.dart';
@@ -7,8 +6,6 @@ import '../theme.dart';
 import '../widgets/metric_tile.dart';
 import '../widgets/route_map.dart';
 
-/// What the assignment asks for after Finish: distance, duration, average pace,
-/// and the route.
 class SummaryScreen extends StatelessWidget {
   const SummaryScreen({super.key, required this.controller, required this.run});
 
@@ -71,9 +68,7 @@ class SummaryScreen extends StatelessWidget {
                   SummaryStat(
                     value: Fmt.pace(pace),
                     label: 'AVG PACE',
-                    caption: speed == null
-                        ? null
-                        : '${Fmt.speed(speed)} km/h',
+                    caption: speed == null ? null : '${Fmt.speed(speed)} km/h',
                     semanticsLabel: Fmt.paceSemantics(pace),
                   ),
                 ],

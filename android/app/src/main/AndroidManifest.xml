@@ -26,7 +26,7 @@
     <uses-feature android:name="android.hardware.sensor.stepcounter" android:required="false"/>
 
     <application
-        android:label="RUN"
+        android:label="RunLog"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

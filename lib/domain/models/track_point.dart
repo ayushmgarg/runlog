@@ -1,8 +1,3 @@
-/// A position that survived the filter chain and is part of the recorded route.
-///
-/// [cumulativeMeters] lets rolling-window pace be computed in O(window) without
-/// re-walking the whole route, and [segment] lets the polyline be drawn with
-/// breaks across pauses and GPS gaps instead of false straight lines.
 class TrackPoint {
   const TrackPoint({
     required this.latitude,

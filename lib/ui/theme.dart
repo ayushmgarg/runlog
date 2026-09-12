@@ -1,14 +1,7 @@
 import 'package:flutter/material.dart';
 
-/// A single dark theme.
-///
-/// Dark is not a style choice here: the screen is read outdoors, often at dawn
-/// or dusk, and on OLED it costs less battery over an hour of tracking. There is
-/// no light variant because there is no setting to change it — one less thing to
-/// get wrong.
 class RunTheme {
   RunTheme._();
-
   static const Color background = Color(0xFF0E1116);
   static const Color surface = Color(0xFF171B22);
   static const Color surfaceHigh = Color(0xFF212733);
@@ -51,8 +44,6 @@ class RunTheme {
         behavior: SnackBarBehavior.floating,
       ),
       dialogTheme: const DialogThemeData(backgroundColor: surface),
-      // Tapped mid-run, out of breath, possibly in the rain: nothing smaller
-      // than 56 dp.
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           minimumSize: const Size.fromHeight(56),
@@ -84,7 +75,5 @@ class RunTheme {
     );
   }
 
-  /// Tabular figures so the numbers do not jitter as digits change every
-  /// second — a metric that shifts sideways while you run is hard to read.
   static const List<FontFeature> tabular = [FontFeature.tabularFigures()];
 }

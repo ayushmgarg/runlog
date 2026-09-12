@@ -1,13 +1,7 @@
 import 'package:flutter/material.dart';
-
 import '../../domain/models/run_status.dart';
 import '../theme.dart';
 
-/// Running / paused, said three ways at once.
-///
-/// Text, colour, and (elsewhere) the primary button's label all change
-/// together. Colour alone would fail for a colour-blind runner and for anyone
-/// glancing at a screen in direct sunlight.
 class StatusPill extends StatelessWidget {
   const StatusPill({super.key, required this.status});
 
@@ -50,10 +44,6 @@ class StatusPill extends StatelessWidget {
   }
 }
 
-/// How much to trust the numbers right now.
-///
-/// A tracker that silently under-reports during a signal loss is worse than one
-/// that says so. Tapping explains what "weak" means for the distance.
 class GpsBadge extends StatelessWidget {
   const GpsBadge({
     super.key,
@@ -62,9 +52,6 @@ class GpsBadge extends StatelessWidget {
   });
 
   final GpsQuality quality;
-
-  /// Distance is coming from the step counter because GPS is unusable. Said
-  /// plainly, because an estimate must not look like a measurement.
   final bool estimatingFromSteps;
 
   @override

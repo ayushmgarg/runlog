@@ -1,35 +1,22 @@
 import 'dart:math' as math;
+import 'package:runlog/domain/models/location_sample.dart';
 
-import 'package:plexqo_run/domain/models/location_sample.dart';
-
-/// A clock the tests move by hand, so every timing rule can be exercised in
-/// microseconds instead of by sleeping.
 class FakeClock {
   FakeClock(this.now);
-
   DateTime now;
-
   DateTime call() => now;
-
   void advance(Duration d) => now = now.add(d);
-
-  /// Simulates an NTP correction that moves the device clock backwards.
   void rewind(Duration d) => now = now.subtract(d);
 }
 
-/// Metres per degree of latitude. Constant enough anywhere on Earth for
-/// building test traces.
 const double metersPerDegreeLat = 111320.0;
 
 double metersPerDegreeLon(double latitude) =>
     metersPerDegreeLat * math.cos(latitude * math.pi / 180.0);
 
-/// A start point that is not on the equator or a pole, so longitude scaling is
-/// actually exercised.
 const double baseLat = 12.9716;
 const double baseLon = 77.5946;
 
-/// Builds a sample [northMeters]/[eastMeters] away from the base point.
 LocationSample sampleAt({
   required double northMeters,
   required double eastMeters,
@@ -46,8 +33,6 @@ LocationSample sampleAt({
   );
 }
 
-/// A straight northward run: [count] fixes, one per [interval], each
-/// [metersPerFix] further along.
 List<LocationSample> straightLine({
   required DateTime start,
   required int count,
@@ -66,8 +51,6 @@ List<LocationSample> straightLine({
   });
 }
 
-/// A phone lying still on a table: fixes scattering around one spot, which is
-/// exactly the situation that makes naive trackers invent distance.
 List<LocationSample> stationaryJitter({
   required DateTime start,
   required int count,
@@ -94,8 +77,6 @@ List<LocationSample> stationaryJitter({
   });
 }
 
-/// Distance a naive `sum(haversine(p[i-1], p[i]))` tracker would report.
-/// Used to show how much noise the filter chain removes.
 double naiveDistance(List<LocationSample> samples) {
   var total = 0.0;
   for (var i = 1; i < samples.length; i++) {

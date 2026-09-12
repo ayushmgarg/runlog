@@ -1,32 +1,25 @@
 import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:plexqo_run/data/run_repository.dart';
-import 'package:plexqo_run/domain/location_provider.dart';
-import 'package:plexqo_run/domain/models/location_sample.dart';
-import 'package:plexqo_run/domain/models/run_record.dart';
-import 'package:plexqo_run/domain/models/run_status.dart';
-import 'package:plexqo_run/ui/run_controller.dart';
-import 'package:plexqo_run/ui/screens/run_screen.dart';
-import 'package:plexqo_run/ui/screens/summary_screen.dart';
-import 'package:plexqo_run/ui/theme.dart';
-
+import 'package:runlog/data/run_repository.dart';
+import 'package:runlog/domain/location_provider.dart';
+import 'package:runlog/domain/models/location_sample.dart';
+import 'package:runlog/domain/models/run_record.dart';
+import 'package:runlog/domain/models/run_status.dart';
+import 'package:runlog/ui/run_controller.dart';
+import 'package:runlog/ui/screens/run_screen.dart';
+import 'package:runlog/ui/screens/summary_screen.dart';
+import 'package:runlog/ui/theme.dart';
 import 'helpers.dart';
 
-/// Storage that never touches the disk.
-///
-/// Widget tests run inside `FakeAsync`, where a real file write never completes
-/// — so a controller doing real I/O would hang forever mid-`finishRun` and the
-/// summary screen would never appear. The on-disk implementation is exercised
-/// separately, on the real event loop, in `run_repository_test.dart`.
 class InMemoryRepository implements RunRepository {
   final List<RunRecord> runs = [];
   Map<String, dynamic>? activeRun;
 
   @override
   Future<List<RunRecord>> loadRuns() async =>
-      List<RunRecord>.of(runs)..sort((a, b) => b.startedAt.compareTo(a.startedAt));
+      List<RunRecord>.of(runs)
+        ..sort((a, b) => b.startedAt.compareTo(a.startedAt));
 
   @override
   Future<void> saveRun(RunRecord run) async {
@@ -50,11 +43,6 @@ class InMemoryRepository implements RunRepository {
   Future<void> clearActiveRun() async => activeRun = null;
 }
 
-/// A [LocationProvider] the test drives by hand.
-///
-/// This is the payoff of putting an interface between the app and the GPS: the
-/// whole start/pause/resume/finish journey can be exercised in a widget test,
-/// with fixes delivered exactly when the test wants them.
 class FakeLocationProvider implements LocationProvider {
   FakeLocationProvider({this.availability = LocationAvailability.ready});
 
@@ -64,11 +52,8 @@ class FakeLocationProvider implements LocationProvider {
 
   int streamRequests = 0;
   bool disposed = false;
-
   void emit(LocationSample sample) => _controller.add(sample);
 
-  /// Ends the stream, which is what Android actually does when location is
-  /// switched off device-wide — it does not merely deliver an error.
   Future<void> endStream() async {
     await _controller.close();
     _controller = StreamController<LocationSample>.broadcast();
@@ -107,7 +92,6 @@ class FakeLocationProvider implements LocationProvider {
 
 void main() {
   final t0 = DateTime.now();
-
   late InMemoryRepository repository;
   late FakeLocationProvider provider;
   late RunController controller;
@@ -121,19 +105,11 @@ void main() {
 
   tearDown(() => controller.dispose());
 
-  /// `pumpAndSettle` is unusable here: an active run holds a 1 Hz repaint
-  /// timer, so the frame queue never goes quiet and it times out. Two explicit
-  /// pumps are enough to run a transition and land the next frame.
   Future<void> settle(WidgetTester tester) async {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
   }
 
-  /// Ends any run still in progress.
-  ///
-  /// An active run holds periodic timers, and the test framework fails a test
-  /// that leaves one pending — correctly, since a leaked timer in the app would
-  /// be a real battery bug.
   Future<void> stopTimers(WidgetTester tester) async {
     await controller.pauseRun();
     await tester.pump();
@@ -144,7 +120,6 @@ void main() {
     home: RunScreen(controller: controller),
   );
 
-  /// Walks the runner forward, one fix per second.
   Future<void> run(WidgetTester tester, {required int seconds}) async {
     for (var i = 1; i <= seconds; i++) {
       provider.emit(
@@ -161,7 +136,6 @@ void main() {
   testWidgets('idle screen offers the one action that matters', (tester) async {
     await tester.pumpWidget(wrap());
     await tester.pump();
-
     expect(find.text('START RUN'), findsOneWidget);
     expect(find.text('PAUSE'), findsNothing);
     expect(find.text('FINISH'), findsNothing);
@@ -174,10 +148,8 @@ void main() {
   ) async {
     await tester.pumpWidget(wrap());
     await tester.pump();
-
     await tester.tap(find.text('START RUN'));
     await settle(tester);
-
     expect(controller.status, RunStatus.active);
     expect(find.text('RUNNING'), findsOneWidget);
     expect(find.text('DURATION'), findsOneWidget);
@@ -186,7 +158,6 @@ void main() {
     expect(find.text('PAUSE'), findsOneWidget);
     expect(find.text('FINISH'), findsOneWidget);
     expect(provider.streamRequests, 1);
-
     await stopTimers(tester);
   });
 
@@ -195,13 +166,10 @@ void main() {
     await tester.pump();
     await tester.tap(find.text('START RUN'));
     await settle(tester);
-
     await run(tester, seconds: 30);
-
     expect(controller.metrics.distanceMeters, greaterThan(50));
     // Under a kilometre the hero metric reads in whole metres.
     expect(find.text('M'), findsOneWidget);
-
     await stopTimers(tester);
   });
 
@@ -213,24 +181,19 @@ void main() {
     await tester.tap(find.text('START RUN'));
     await settle(tester);
     await run(tester, seconds: 10);
-
     await tester.tap(find.text('PAUSE'));
     await settle(tester);
-
     expect(controller.status, RunStatus.paused);
     expect(find.text('PAUSED'), findsOneWidget);
     expect(find.text('RESUME'), findsOneWidget);
     expect(find.text('PAUSE'), findsNothing);
-
     await tester.tap(find.text('RESUME'));
     await settle(tester);
-
     expect(controller.status, RunStatus.active);
     expect(find.text('RUNNING'), findsOneWidget);
     expect(find.text('PAUSE'), findsOneWidget);
     // Resuming re-subscribes: a paused run holds no location subscription.
     expect(provider.streamRequests, 2);
-
     await stopTimers(tester);
   });
 
@@ -240,10 +203,8 @@ void main() {
     await tester.tap(find.text('START RUN'));
     await settle(tester);
     await run(tester, seconds: 10);
-
     await tester.tap(find.text('FINISH'));
     await settle(tester);
-
     expect(find.text('Finish run?'), findsOneWidget);
     await tester.tap(find.text('Keep running'));
     await settle(tester);
@@ -251,7 +212,6 @@ void main() {
     // An accidental tap must not end the run.
     expect(controller.status, RunStatus.active);
     expect(find.text('RUNNING'), findsOneWidget);
-
     await stopTimers(tester);
   });
 
@@ -263,12 +223,10 @@ void main() {
     await tester.tap(find.text('START RUN'));
     await settle(tester);
     await run(tester, seconds: 40);
-
     await tester.tap(find.text('FINISH'));
     await settle(tester);
     await tester.tap(find.text('Finish'));
     await settle(tester);
-
     expect(find.byType(SummaryScreen), findsOneWidget);
     expect(find.text('DISTANCE'), findsOneWidget);
     expect(find.text('DURATION'), findsOneWidget);
@@ -288,7 +246,6 @@ void main() {
     await tester.tap(find.text('START RUN'));
     await settle(tester);
     await tester.pump(const Duration(seconds: 3));
-
     await tester.tap(find.text('FINISH'));
     await settle(tester);
     await tester.tap(find.text('Finish'));
@@ -307,31 +264,24 @@ void main() {
     await tester.pump();
     await tester.tap(find.text('START RUN'));
     await settle(tester);
-
     expect(find.text('Map'), findsOneWidget);
     expect(controller.mapExpanded, isFalse);
-
     await tester.tap(find.text('Map'));
     await tester.pump();
-
     expect(controller.mapExpanded, isTrue);
     expect(find.text('Hide map'), findsOneWidget);
-
     await stopTimers(tester);
   });
 
   testWidgets('a closed location stream is re-opened while the run is active', (
     tester,
   ) async {
-    // Reported from the field: switching location off and on again left the
-    // run ticking with no fixes for the rest of its life.
     await tester.pumpWidget(wrap());
     await tester.pump();
     await tester.tap(find.text('START RUN'));
     await settle(tester);
     await run(tester, seconds: 5);
     expect(provider.streamRequests, 1);
-
     await provider.endStream();
     await tester.pump();
 
@@ -349,21 +299,16 @@ void main() {
   testWidgets('a closed stream is not re-opened once the run is paused', (
     tester,
   ) async {
-    // The mirror image: holding the receiver open for a paused run, or
-    // retrying forever after finishing, would be a battery bug.
     await tester.pumpWidget(wrap());
     await tester.pump();
     await tester.tap(find.text('START RUN'));
     await settle(tester);
     await run(tester, seconds: 3);
-
     await controller.pauseRun();
     await tester.pump();
     final afterPause = provider.streamRequests;
-
     await provider.endStream();
     await tester.pump(const Duration(seconds: 6));
-
     expect(provider.streamRequests, afterPause);
   });
 
@@ -372,15 +317,11 @@ void main() {
   ) async {
     provider.availability = LocationAvailability.denied;
     await controller.refreshAvailability();
-
     await tester.pumpWidget(wrap());
     await tester.pump();
-
     expect(find.text('Location permission needed'), findsOneWidget);
-
     await tester.tap(find.text('START RUN'));
     await settle(tester);
-
     expect(controller.status, RunStatus.idle);
     expect(find.text('START RUN'), findsOneWidget);
   });
@@ -396,7 +337,6 @@ void main() {
     await run(tester, seconds: 20);
     await controller.pauseRun();
     await settle(tester);
-
     expect(repository.activeRun, isNotNull, reason: 'the run was snapshotted');
 
     // A fresh controller over the same storage is exactly what a relaunch is.
@@ -406,7 +346,6 @@ void main() {
     );
     await relaunched.init();
     addTearDown(relaunched.dispose);
-
     expect(relaunched.hasRecoveredRun, isTrue);
 
     await tester.pumpWidget(
@@ -416,7 +355,6 @@ void main() {
       ),
     );
     await tester.pump();
-
     expect(find.text('Unfinished run'), findsOneWidget);
     expect(find.text('Resume'), findsOneWidget);
     expect(find.text('Save'), findsOneWidget);

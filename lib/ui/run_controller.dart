@@ -1,9 +1,7 @@
 import 'dart:async';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
-
 import '../data/geolocator_location_provider.dart';
 import '../data/pedometer_step_provider.dart';
 import '../data/run_repository.dart';
@@ -16,16 +14,6 @@ import '../domain/models/track_point.dart';
 import '../domain/run_tracker.dart';
 import '../domain/step_provider.dart';
 
-/// Everything the app knows, in one listenable object.
-///
-/// The app has exactly one piece of mutable state — the current run — with
-/// exactly one owner, so a [ChangeNotifier] is the right size for it. A
-/// state-management package here would add a dependency, a build step and a set
-/// of rebuild-scope rules without removing a single line of real logic.
-///
-/// Responsibilities kept deliberately here rather than in [RunTracker]:
-/// permissions, the position subscription, the repaint ticker, persistence and
-/// app lifecycle. The tracker stays pure so it stays testable.
 class RunController extends ChangeNotifier with WidgetsBindingObserver {
   RunController({
     RunRepository? repository,
@@ -38,7 +26,6 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
   final RunRepository _repository;
   final LocationProvider _provider;
   final StepProvider _stepProvider;
-
   RunTracker _tracker = RunTracker();
   StreamSubscription<LocationSample>? _positionSubscription;
   StreamSubscription<StepSample>? _stepSubscription;
@@ -46,21 +33,11 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
   Timer? _ticker;
   Timer? _snapshotTimer;
   Timer? _resubscribeTimer;
-
-  /// The location stream has stopped delivering fixes mid-run.
-  ///
-  /// Durable state rather than a one-off message: the condition lasts until the
-  /// user fixes it, so the UI shows a standing banner. Firing a transient
-  /// notice instead meant one popup per retry, every three seconds.
   bool _locationInterrupted = false;
-
   LocationAvailability _availability = LocationAvailability.notRequested;
   List<RunRecord> _history = const [];
   RunRecord? _lastFinishedRun;
-
-  /// A run recovered from disk that the user has not yet dealt with.
   RunTracker? _recoveredRun;
-
   bool _stepFallbackAvailable = false;
   bool _mapExpanded = false;
   bool _busy = false;
@@ -76,15 +53,11 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
   RunRecord? get lastFinishedRun => _lastFinishedRun;
   RunTracker? get recoveredRun => _recoveredRun;
   bool get hasRecoveredRun => _recoveredRun != null;
-  /// Whether the step counter is readable, so the UI can explain when distance
-  /// will keep working without GPS and when it will not.
   bool get stepFallbackAvailable => _stepFallbackAvailable;
   bool get mapExpanded => _mapExpanded;
   bool get busy => _busy;
   String? get error => _error;
 
-  /// True while a run is active but the location stream is not delivering.
-  /// Cleared by the next fix that arrives.
   bool get locationInterrupted =>
       _locationInterrupted && _tracker.status.isInProgress;
 
@@ -103,12 +76,6 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  /// Follows the OS location switch for the app's whole lifetime.
-  ///
-  /// Without this the idle screen reported whatever was true when the app
-  /// started: turning location off while looking at the start button changed
-  /// nothing on screen. It also makes recovery immediate during a run, instead
-  /// of waiting out the retry timer.
   void _watchServiceStatus() {
     _serviceSubscription?.cancel();
     _serviceSubscription = _provider.serviceEnabledStream().listen(
@@ -124,10 +91,6 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
         // Location is back on: re-open now rather than waiting out the retry.
         if (_tracker.status.isActive) {
           _resubscribeTimer?.cancel();
-          // Clear the banner here rather than waiting for the first fix. The
-          // banner's claim is "location is off", and it no longer is; how long
-          // the receiver then takes to reacquire is the GPS badge's business,
-          // and can be half a minute on a cold start.
           _locationInterrupted = false;
           _tracker.setLocationUnavailable(false);
           await _startLocationStream();
@@ -139,8 +102,6 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
-  /// Warms up the receiver on the idle screen so the first fix is not still
-  /// arriving when the user taps Start.
   Future<void> warmUpGps() async {
     if (_availability != LocationAvailability.ready) return;
     await _provider.lastKnownOrCurrent();
@@ -157,7 +118,6 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> openAppSettings() => _provider.openAppSettings();
-
   Future<void> openLocationSettings() => _provider.openLocationSettings();
 
   void setMapExpanded(bool expanded) {
@@ -168,12 +128,6 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
 
   // ------------------------------------------------------------ run control
 
-  /// Returns false if the run could not start, having set [error] to something
-  /// the UI can show.
-  /// Starts a run.
-  ///
-  /// [requireLocation] false starts without GPS at all, measuring from the step
-  /// counter. See `startWithoutLocation`.
   Future<bool> startRun({bool requireLocation = true}) async {
     if (!canStart) return false;
     _busy = true;
@@ -189,17 +143,11 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
         }
       }
 
-      // Asked for at the same time as location, because it is what keeps
-      // distance alive when location stops working. A refusal is not fatal.
       _stepFallbackAvailable = await _stepProvider.requestPermission();
-
       _locationInterrupted = !requireLocation;
       _tracker = RunTracker();
       _tracker.start();
-      // Without this, the engine would spend its staleness timeout believing
-      // GPS is merely quiet, and the step fallback would not take over.
       if (!requireLocation) _tracker.setLocationUnavailable(true);
-
       await _startListening();
       if (requireLocation) await _seedFromLastKnown();
       _startTicker();
@@ -211,23 +159,8 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  /// Starts a run with no GPS: distance and pace come from the step counter.
-  ///
-  /// Offered when location is unavailable and the user wants to run anyway. It
-  /// is a worse measurement, not a broken one, and refusing to start at all
-  /// would be the wrong answer to "I am about to go running".
   Future<bool> startWithoutLocation() => startRun(requireLocation: false);
 
-  /// Anchors the run on the device's cached position, if it is fresh enough.
-  ///
-  /// A cold GPS fix can take tens of seconds, during which the run shows
-  /// "acquiring" and records nothing. The OS almost always has a recent
-  /// position already; using it means tracking starts immediately.
-  ///
-  /// Only a genuinely recent fix qualifies. An hour-old position from across
-  /// town would anchor the run in the wrong place, and although the filter
-  /// chain would reject the jump rather than credit the distance, it would
-  /// still waste the opening seconds recovering.
   Future<void> _seedFromLastKnown() async {
     try {
       final cached = await _provider.lastKnownOrCurrent();
@@ -243,13 +176,7 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> pauseRun() async {
     if (_tracker.status != RunStatus.active) return;
     _tracker.pause();
-    // The receiver is the most expensive thing running; a paused run has no use
-    // for it, and dropping the subscription also guarantees no stray fix can be
-    // recorded.
     await _stopListening();
-    // Nothing changes while paused, so the repaint ticker and the snapshot
-    // timer have nothing to do either. One final snapshot below covers the
-    // paused state.
     _stopTicker();
     await _enableWakelock(false);
     await _saveSnapshot();
@@ -265,16 +192,12 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  /// Ends the run and saves it. Returns the stored record, or null when there
-  /// was no run to finish.
   Future<RunRecord?> finishRun() async {
     if (!_tracker.status.isInProgress) return null;
-
     _tracker.finish();
     await _stopListening();
     _stopTicker();
     await _enableWakelock(false);
-
     final startedAt = _tracker.startedAt ?? DateTime.now();
     final record = RunRecord.fromRun(
       startedAt: startedAt,
@@ -292,7 +215,6 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
     return record;
   }
 
-  /// Clears the finished run so the app returns to a fresh idle screen.
   void dismissFinishedRun() {
     _tracker.reset();
     _lastFinishedRun = null;
@@ -313,8 +235,6 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
     if (snapshot == null) return;
     try {
       final restored = RunTracker.fromSnapshot(snapshot);
-      // A snapshot with nothing in it is noise from a crash on the start
-      // screen, not a run worth asking the user about.
       if (restored.elapsed.inSeconds < 5 && restored.route.isEmpty) {
         await _repository.clearActiveRun();
         return;
@@ -325,7 +245,6 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  /// Picks the recovered run back up, paused, so the user decides when to run.
   Future<void> resumeRecoveredRun() async {
     final recovered = _recoveredRun;
     if (recovered == null) return;
@@ -335,8 +254,6 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
     await resumeRun();
   }
 
-  /// Keeps the recovered run as a finished activity without pretending the
-  /// user kept running.
   Future<RunRecord?> saveRecoveredRun() async {
     final recovered = _recoveredRun;
     if (recovered == null) return null;
@@ -358,14 +275,8 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
     await _startStepStream();
   }
 
-  /// Opens the position stream.
-  ///
-  /// Kept separate from the step stream so that retrying location -- which can
-  /// happen every few seconds while location is switched off -- never tears
-  /// down and rebuilds the pedometer subscription underneath a running run.
   Future<void> _startLocationStream() async {
     _resubscribeTimer?.cancel();
-
     await _positionSubscription?.cancel();
     _positionSubscription = _provider.positionStream().listen(
       (sample) {
@@ -378,16 +289,8 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
         notifyListeners();
       },
       onError: (Object _) {
-        // Not surfaced as a message. A stream error is a condition, not an
-        // event: it persists until the user turns location back on, and the
-        // retry loop would otherwise raise the same notice every few seconds.
-        // The run screen shows a standing banner instead.
         _onLocationLost();
       },
-      // Switching location off device-wide makes Android *end* this stream, not
-      // merely error it. Without this the run would keep its duration ticking
-      // while silently never receiving another fix, and turning GPS back on
-      // would not recover until the user paused and resumed.
       onDone: _onLocationLost,
       cancelOnError: false,
     );
@@ -398,8 +301,6 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
     if (_stepSubscription != null) return;
     _stepSubscription = _stepProvider.stepStream().listen(
       (sample) {
-        // The engine decides whether these steps count as distance or only
-        // calibrate the stride; the controller just delivers them.
         _tracker.addStepSample(sample);
         notifyListeners();
       },
@@ -408,12 +309,6 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
-  /// The location source has gone, as opposed to merely gone quiet.
-  ///
-  /// Told to the engine immediately rather than left to the staleness timeout.
-  /// Waiting for that timeout left several seconds in which GPS still looked
-  /// healthy, so the step fallback had not taken over and nothing was
-  /// measuring at all -- the metrics appeared to freeze.
   void _onLocationLost() {
     _locationInterrupted = true;
     _tracker.setLocationUnavailable(true);
@@ -421,15 +316,6 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
     _scheduleResubscribe();
   }
 
-  /// Re-opens the position stream a few seconds after it ended or failed.
-  ///
-  /// Only while a run is actually active: a paused or finished run has no
-  /// business holding the receiver open, and retrying forever in the background
-  /// would be a battery bug.
-  ///
-  /// Deliberately does no permission or service-status checks here. Those are
-  /// platform calls, and making them on a timer while the user is toggling
-  /// location put avoidable work on the platform thread mid-run.
   void _scheduleResubscribe() {
     if (!_tracker.status.isActive) return;
     if (_resubscribeTimer?.isActive ?? false) return;
@@ -448,8 +334,6 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
     _stepSubscription = null;
   }
 
-  /// 1 Hz repaint only. The displayed duration is computed from the wall clock,
-  /// so a missed tick costs a frame, never a second.
   void _startTicker() {
     _ticker?.cancel();
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -510,8 +394,6 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Snapshot whenever the app leaves the foreground: that is the moment
-    // before the OS is allowed to kill the process.
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached ||
         state == AppLifecycleState.hidden) {

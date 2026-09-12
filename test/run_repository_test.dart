@@ -1,16 +1,10 @@
 import 'dart:convert';
 import 'dart:io';
-
 import 'package:flutter_test/flutter_test.dart';
-import 'package:plexqo_run/data/run_repository.dart';
-import 'package:plexqo_run/domain/models/run_record.dart';
-import 'package:plexqo_run/domain/models/track_point.dart';
+import 'package:runlog/data/run_repository.dart';
+import 'package:runlog/domain/models/run_record.dart';
+import 'package:runlog/domain/models/track_point.dart';
 
-/// Storage tests run on the real event loop against a real directory.
-///
-/// The widget tests use an in-memory store instead, because file I/O never
-/// completes inside `testWidgets`' fake clock — so these exist to cover the
-/// paths that actually touch a disk.
 void main() {
   late Directory tempDir;
   late RunRepository repository;
@@ -58,7 +52,6 @@ void main() {
     test('round-trips a run, route and all', () async {
       await repository.saveRun(record('a'));
       final loaded = await repository.loadRuns();
-
       expect(loaded, hasLength(1));
       final run = loaded.first;
       expect(run.id, 'a');
@@ -77,10 +70,7 @@ void main() {
         record('new', startedAt: DateTime(2026, 9, 10, 6)),
       );
 
-      expect(
-        (await repository.loadRuns()).map((r) => r.id),
-        ['new', 'old'],
-      );
+      expect((await repository.loadRuns()).map((r) => r.id), ['new', 'old']);
     });
 
     test('saving the same id twice updates rather than duplicates', () async {
@@ -92,25 +82,30 @@ void main() {
     test('deletes a single run and leaves the rest', () async {
       await repository.saveRun(record('a', startedAt: DateTime(2026, 9, 1)));
       await repository.saveRun(record('b', startedAt: DateTime(2026, 9, 2)));
-
       await repository.deleteRun('a');
-
       expect((await repository.loadRuns()).map((r) => r.id), ['b']);
     });
 
-    test('a corrupt history file degrades to empty instead of crashing', () async {
-      // Losing history is bad; a permanently unusable app is worse.
-      await File('${tempDir.path}/runs.json').writeAsString('{not json at all');
-      expect(await repository.loadRuns(), isEmpty);
+    test(
+      'a corrupt history file degrades to empty instead of crashing',
+      () async {
+        // Losing history is bad; a permanently unusable app is worse.
+        await File(
+          '${tempDir.path}/runs.json',
+        ).writeAsString('{not json at all');
+        expect(await repository.loadRuns(), isEmpty);
 
-      // ...and it recovers: the next save rewrites the file cleanly.
-      await repository.saveRun(record('a'));
-      expect(await repository.loadRuns(), hasLength(1));
-    });
+        // ...and it recovers: the next save rewrites the file cleanly.
+        await repository.saveRun(record('a'));
+        expect(await repository.loadRuns(), hasLength(1));
+      },
+    );
 
     test('writes are atomic, leaving no partial file behind', () async {
       await repository.saveRun(record('a'));
-      final files = tempDir.listSync().map((e) => e.path.split(RegExp(r'[\\/]')).last);
+      final files = tempDir.listSync().map(
+        (e) => e.path.split(RegExp(r'[\\/]')).last,
+      );
       expect(files, contains('runs.json'));
       expect(files.where((f) => f.endsWith('.tmp')), isEmpty);
     });
@@ -127,7 +122,6 @@ void main() {
       final loaded = await repository.loadActiveRun();
       expect(loaded, isNotNull);
       expect(loaded!['distance'], 812.5);
-
       await repository.clearActiveRun();
       expect(await repository.loadActiveRun(), isNull);
     });
@@ -142,8 +136,6 @@ void main() {
     });
 
     test('survives being written and read as raw JSON', () async {
-      // Guards the contract the recovery flow depends on: whatever
-      // RunTracker.toSnapshot produces must survive a JSON round-trip.
       final snapshot = {
         'version': 1,
         'status': 'active',
