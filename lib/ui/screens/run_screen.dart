@@ -148,7 +148,11 @@ class _RunScreenState extends State<RunScreen> {
           ),
         ),
         const SizedBox(height: 28),
-        _LocationStatus(controller: _c, ready: ready),
+        _LocationStatus(
+          controller: _c,
+          ready: ready,
+          onStartWithoutLocation: _startWithoutLocation,
+        ),
         const Spacer(),
       ],
     );
@@ -270,6 +274,34 @@ class _RunScreenState extends State<RunScreen> {
         await _offerSettings(availability);
       }
     }
+  }
+
+  /// Starts a steps-only run after saying plainly what that costs.
+  Future<void> _startWithoutLocation() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Start without location?'),
+        content: const Text(
+          'Distance and pace will be estimated from your step count, and no '
+          'route will be recorded. Less accurate than GPS, and you can switch '
+          'location on at any point during the run to take over.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(minimumSize: const Size(100, 44)),
+            child: const Text('Start'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await _c.startWithoutLocation();
   }
 
   Future<void> _offerSettings(LocationAvailability availability) async {
@@ -415,10 +447,15 @@ class _MapSection extends StatelessWidget {
 }
 
 class _LocationStatus extends StatelessWidget {
-  const _LocationStatus({required this.controller, required this.ready});
+  const _LocationStatus({
+    required this.controller,
+    required this.ready,
+    required this.onStartWithoutLocation,
+  });
 
   final RunController controller;
   final bool ready;
+  final VoidCallback onStartWithoutLocation;
 
   @override
   Widget build(BuildContext context) {
@@ -455,12 +492,21 @@ class _LocationStatus extends StatelessWidget {
             Text(text, style: TextStyle(color: color, fontSize: 13)),
           ],
         ),
-        if (!ready &&
-            controller.availability != LocationAvailability.deniedForever) ...[
-          const SizedBox(height: 8),
+        if (!ready) ...[
+          const SizedBox(height: 4),
+          if (controller.availability != LocationAvailability.deniedForever)
+            TextButton(
+              onPressed: controller.requestPermission,
+              child: const Text('Grant location access'),
+            ),
+          // Someone standing at the door about to run should not be told no.
+          // A steps-only run is a worse measurement, not a broken one.
           TextButton(
-            onPressed: controller.requestPermission,
-            child: const Text('Grant location access'),
+            onPressed: onStartWithoutLocation,
+            style: TextButton.styleFrom(
+              foregroundColor: RunTheme.textSecondary,
+            ),
+            child: const Text('Start without location'),
           ),
         ],
       ],

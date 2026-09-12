@@ -69,7 +69,8 @@ Three additions beyond that list:
 - **An expandable live map** on the run screen — collapsed by default so the default screen is
   exactly the five elements the brief asks for, and unmounted while collapsed so it costs
   nothing until you ask for it.
-- **A step-counter fallback**, so distance and pace survive losing GPS entirely.
+- **A step-counter fallback**, so distance and pace survive losing GPS entirely — including
+  starting a run without location at all.
 
 Run history is kept on the device, because a finished run has to be openable again after the
 summary is dismissed.
@@ -225,8 +226,10 @@ Static analysis (`flutter analyze`, `flutter_lints`) is clean with no suppressio
   correct scale, no streets. Nothing else about the run is affected. Tiles already fetched stay
   in memory for the session but are not written to disk, so they do not survive a restart.
 - **A cold start with no data is slow to get its first fix.** Phones use the network to download
-  satellite ephemeris (A-GPS); without it the first usable fix can take 30–60 s. Duration starts
-  immediately, so no time is lost, but the opening stretch of distance can be.
+  satellite ephemeris (A-GPS); without it the first usable fix can take 30–60 s. The run is
+  seeded from the device's cached position when that position is under a minute old, which
+  covers the common case, but with nothing cached the opening stretch of distance can be missed.
+  Duration starts immediately either way.
 - **A pause longer than the OS is willing to keep the process alive** ends as a recovery prompt
   on the next launch rather than a still-running app. That is a platform constraint, and the
   snapshot exists precisely so nothing is lost.

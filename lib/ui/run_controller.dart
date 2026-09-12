@@ -124,6 +124,12 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
         // Location is back on: re-open now rather than waiting out the retry.
         if (_tracker.status.isActive) {
           _resubscribeTimer?.cancel();
+          // Clear the banner here rather than waiting for the first fix. The
+          // banner's claim is "location is off", and it no longer is; how long
+          // the receiver then takes to reacquire is the GPS badge's business,
+          // and can be half a minute on a cold start.
+          _locationInterrupted = false;
+          _tracker.setLocationUnavailable(false);
           await _startLocationStream();
         }
         notifyListeners();
@@ -164,33 +170,73 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Returns false if the run could not start, having set [error] to something
   /// the UI can show.
-  Future<bool> startRun() async {
+  /// Starts a run.
+  ///
+  /// [requireLocation] false starts without GPS at all, measuring from the step
+  /// counter. See `startWithoutLocation`.
+  Future<bool> startRun({bool requireLocation = true}) async {
     if (!canStart) return false;
     _busy = true;
     _error = null;
     notifyListeners();
 
     try {
-      _availability = await _provider.requestPermission();
-      if (_availability != LocationAvailability.ready) {
-        _error = _messageFor(_availability);
-        return false;
+      if (requireLocation) {
+        _availability = await _provider.requestPermission();
+        if (_availability != LocationAvailability.ready) {
+          _error = _messageFor(_availability);
+          return false;
+        }
       }
 
       // Asked for at the same time as location, because it is what keeps
       // distance alive when location stops working. A refusal is not fatal.
       _stepFallbackAvailable = await _stepProvider.requestPermission();
 
-      _locationInterrupted = false;
+      _locationInterrupted = !requireLocation;
       _tracker = RunTracker();
       _tracker.start();
+      // Without this, the engine would spend its staleness timeout believing
+      // GPS is merely quiet, and the step fallback would not take over.
+      if (!requireLocation) _tracker.setLocationUnavailable(true);
+
       await _startListening();
+      if (requireLocation) await _seedFromLastKnown();
       _startTicker();
       await _enableWakelock(true);
       return true;
     } finally {
       _busy = false;
       notifyListeners();
+    }
+  }
+
+  /// Starts a run with no GPS: distance and pace come from the step counter.
+  ///
+  /// Offered when location is unavailable and the user wants to run anyway. It
+  /// is a worse measurement, not a broken one, and refusing to start at all
+  /// would be the wrong answer to "I am about to go running".
+  Future<bool> startWithoutLocation() => startRun(requireLocation: false);
+
+  /// Anchors the run on the device's cached position, if it is fresh enough.
+  ///
+  /// A cold GPS fix can take tens of seconds, during which the run shows
+  /// "acquiring" and records nothing. The OS almost always has a recent
+  /// position already; using it means tracking starts immediately.
+  ///
+  /// Only a genuinely recent fix qualifies. An hour-old position from across
+  /// town would anchor the run in the wrong place, and although the filter
+  /// chain would reject the jump rather than credit the distance, it would
+  /// still waste the opening seconds recovering.
+  Future<void> _seedFromLastKnown() async {
+    try {
+      final cached = await _provider.lastKnownOrCurrent();
+      if (cached == null) return;
+      if (DateTime.now().difference(cached.timestamp).inSeconds > 60) return;
+      _tracker.addSample(cached);
+      notifyListeners();
+    } catch (_) {
+      // Best effort only: the live stream is the real source.
     }
   }
 
