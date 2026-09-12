@@ -43,3 +43,6 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Assignment brief: local reference only, not part of the deliverable.
+*.docx

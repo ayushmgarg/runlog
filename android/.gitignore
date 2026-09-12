@@ -1,0 +1,19 @@
+gradle-wrapper.jar
+/.gradle
+
+# Gradle output. The root .gitignore only has "/build/", which matches the
+# repository root and not android/build or android/app/build, so running
+# gradlew directly leaves build artefacts staged for commit.
+build/
+/captures/
+/gradlew
+/gradlew.bat
+/local.properties
+GeneratedPluginRegistrant.java
+.cxx/
+
+# Remember to never publicly share your keystore.
+# See https://flutter.dev/to/reference-keystore
+key.properties
+**/*.keystore
+**/*.jks

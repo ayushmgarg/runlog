@@ -1,0 +1,45 @@
+name: runlog
+description: "A running tracker: live distance, pace and speed, pause and resume, and your route on a map."
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_map: ^8.3.2
+  geolocator: ^14.0.2
+  latlong2: ^0.10.1
+  path_provider: ^2.1.5
+  pedometer: ^4.2.0
+  permission_handler: 11.3.1
+  wakelock_plus: ^1.4.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  # Generates the launcher icons from assets/icon/. Dev-only: nothing here
+  # ships in the app.
+  flutter_launcher_icons: ^0.14.4
+
+# Source icons are produced by tool/generate_icon.py, then expanded into every
+# density by `dart run flutter_launcher_icons`. Deliberately not listed under
+# flutter/assets: launcher icons are read by the OS from the generated
+# resources, so bundling the originals too would only grow the APK.
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon/icon.png"
+  # Android 8+ adaptive icon: the launcher masks the foreground to its own
+  # shape, over this background colour (RunTheme.background).
+  adaptive_icon_background: "#0E1116"
+  adaptive_icon_foreground: "assets/icon/icon_foreground.png"
+  min_sdk_android: 21
+  # iOS rejects icons with an alpha channel.
+  remove_alpha_ios: true
+
+flutter:
+  uses-material-design: true
