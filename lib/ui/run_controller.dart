@@ -42,6 +42,7 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
   RunTracker _tracker = RunTracker();
   StreamSubscription<LocationSample>? _positionSubscription;
   StreamSubscription<StepSample>? _stepSubscription;
+  StreamSubscription<bool>? _serviceSubscription;
   Timer? _ticker;
   Timer? _snapshotTimer;
   Timer? _resubscribeTimer;
@@ -95,10 +96,41 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> init() async {
     WidgetsBinding.instance.addObserver(this);
     _availability = await _provider.checkAvailability();
+    _watchServiceStatus();
     _stepFallbackAvailable = await _stepProvider.isAvailable();
     _history = await _repository.loadRuns();
     await _restoreUnfinishedRun();
     notifyListeners();
+  }
+
+  /// Follows the OS location switch for the app's whole lifetime.
+  ///
+  /// Without this the idle screen reported whatever was true when the app
+  /// started: turning location off while looking at the start button changed
+  /// nothing on screen. It also makes recovery immediate during a run, instead
+  /// of waiting out the retry timer.
+  void _watchServiceStatus() {
+    _serviceSubscription?.cancel();
+    _serviceSubscription = _provider.serviceEnabledStream().listen(
+      (enabled) async {
+        if (!enabled) {
+          _availability = LocationAvailability.serviceDisabled;
+          if (_tracker.status.isActive) _onLocationLost();
+          notifyListeners();
+          return;
+        }
+
+        _availability = await _provider.checkAvailability();
+        // Location is back on: re-open now rather than waiting out the retry.
+        if (_tracker.status.isActive) {
+          _resubscribeTimer?.cancel();
+          await _startLocationStream();
+        }
+        notifyListeners();
+      },
+      onError: (Object _) {},
+      cancelOnError: false,
+    );
   }
 
   /// Warms up the receiver on the idle screen so the first fix is not still
@@ -450,6 +482,7 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _stopTicker();
     _resubscribeTimer?.cancel();
+    _serviceSubscription?.cancel();
     _positionSubscription?.cancel();
     _stepSubscription?.cancel();
     _provider.dispose();

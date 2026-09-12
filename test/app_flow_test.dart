@@ -96,6 +96,9 @@ class FakeLocationProvider implements LocationProvider {
   }
 
   @override
+  Stream<bool> serviceEnabledStream() => const Stream<bool>.empty();
+
+  @override
   Future<void> dispose() async {
     disposed = true;
     await _controller.close();

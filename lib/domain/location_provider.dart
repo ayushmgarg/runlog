@@ -54,6 +54,13 @@ abstract class LocationProvider {
   /// samples: filtering is the engine's job, not the platform's.
   Stream<LocationSample> positionStream();
 
+  /// Emits whenever the device's location services are switched on or off.
+  ///
+  /// Separate from [positionStream] because it answers a different question and
+  /// stays valid when there is no run: the idle screen has to show whether
+  /// location is usable *now*, not whether it was usable when the app started.
+  Stream<bool> serviceEnabledStream();
+
   /// Releases platform resources. Called when a run ends or is paused.
   Future<void> dispose();
 }

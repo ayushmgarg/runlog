@@ -156,6 +156,9 @@ class SimulatedLocationProvider implements LocationProvider {
   }
 
   @override
+  Stream<bool> serviceEnabledStream() => const Stream<bool>.empty();
+
+  @override
   Future<void> dispose() async {
     _timer?.cancel();
     _timer = null;

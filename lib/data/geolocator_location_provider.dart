@@ -140,6 +140,11 @@ class GeolocatorLocationProvider implements LocationProvider {
     return controller.stream;
   }
 
+  @override
+  Stream<bool> serviceEnabledStream() => Geolocator.getServiceStatusStream()
+      .map((status) => status == ServiceStatus.enabled)
+      .handleError((Object _) {});
+
   static LocationSample _toSample(Position position) => LocationSample(
     latitude: position.latitude,
     longitude: position.longitude,
