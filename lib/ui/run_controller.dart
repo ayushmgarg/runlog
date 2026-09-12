@@ -276,13 +276,26 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
   // ------------------------------------------------------------- plumbing
 
   Future<void> _startListening() async {
+    await _startLocationStream();
+    await _startStepStream();
+  }
+
+  /// Opens the position stream.
+  ///
+  /// Kept separate from the step stream so that retrying location -- which can
+  /// happen every few seconds while location is switched off -- never tears
+  /// down and rebuilds the pedometer subscription underneath a running run.
+  Future<void> _startLocationStream() async {
     _resubscribeTimer?.cancel();
 
     await _positionSubscription?.cancel();
     _positionSubscription = _provider.positionStream().listen(
       (sample) {
         // Fixes are flowing again, so whatever was wrong no longer is.
-        if (_locationInterrupted) _locationInterrupted = false;
+        if (_locationInterrupted) {
+          _locationInterrupted = false;
+          _tracker.setLocationUnavailable(false);
+        }
         _tracker.addSample(sample);
         notifyListeners();
       },
@@ -291,35 +304,43 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
         // event: it persists until the user turns location back on, and the
         // retry loop would otherwise raise the same notice every few seconds.
         // The run screen shows a standing banner instead.
-        _locationInterrupted = true;
-        notifyListeners();
-        _scheduleResubscribe();
+        _onLocationLost();
       },
       // Switching location off device-wide makes Android *end* this stream, not
       // merely error it. Without this the run would keep its duration ticking
       // while silently never receiving another fix, and turning GPS back on
       // would not recover until the user paused and resumed.
-      onDone: () {
-        _locationInterrupted = true;
-        notifyListeners();
-        _scheduleResubscribe();
-      },
+      onDone: _onLocationLost,
       cancelOnError: false,
     );
+  }
 
-    if (_stepFallbackAvailable) {
-      await _stepSubscription?.cancel();
-      _stepSubscription = _stepProvider.stepStream().listen(
-        (sample) {
-          // The engine decides whether these steps count as distance or only
-          // calibrate the stride; the controller just delivers them.
-          _tracker.addStepSample(sample);
-          notifyListeners();
-        },
-        onError: (Object _) {},
-        cancelOnError: false,
-      );
-    }
+  Future<void> _startStepStream() async {
+    if (!_stepFallbackAvailable) return;
+    if (_stepSubscription != null) return;
+    _stepSubscription = _stepProvider.stepStream().listen(
+      (sample) {
+        // The engine decides whether these steps count as distance or only
+        // calibrate the stride; the controller just delivers them.
+        _tracker.addStepSample(sample);
+        notifyListeners();
+      },
+      onError: (Object _) {},
+      cancelOnError: false,
+    );
+  }
+
+  /// The location source has gone, as opposed to merely gone quiet.
+  ///
+  /// Told to the engine immediately rather than left to the staleness timeout.
+  /// Waiting for that timeout left several seconds in which GPS still looked
+  /// healthy, so the step fallback had not taken over and nothing was
+  /// measuring at all -- the metrics appeared to freeze.
+  void _onLocationLost() {
+    _locationInterrupted = true;
+    _tracker.setLocationUnavailable(true);
+    notifyListeners();
+    _scheduleResubscribe();
   }
 
   /// Re-opens the position stream a few seconds after it ended or failed.
@@ -327,16 +348,16 @@ class RunController extends ChangeNotifier with WidgetsBindingObserver {
   /// Only while a run is actually active: a paused or finished run has no
   /// business holding the receiver open, and retrying forever in the background
   /// would be a battery bug.
+  ///
+  /// Deliberately does no permission or service-status checks here. Those are
+  /// platform calls, and making them on a timer while the user is toggling
+  /// location put avoidable work on the platform thread mid-run.
   void _scheduleResubscribe() {
     if (!_tracker.status.isActive) return;
     if (_resubscribeTimer?.isActive ?? false) return;
-    _resubscribeTimer = Timer(const Duration(seconds: 3), () async {
+    _resubscribeTimer = Timer(const Duration(seconds: 5), () {
       if (!_tracker.status.isActive) return;
-      // Keeps the idle screen and the permission prompts honest if the user
-      // turned location off rather than simply losing signal.
-      _availability = await _provider.checkAvailability();
-      await _startListening();
-      notifyListeners();
+      _startLocationStream();
     });
   }
 

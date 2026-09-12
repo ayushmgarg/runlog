@@ -103,6 +103,15 @@ class RunTracker {
   /// [TrackerConfig.maxConsecutiveRejections].
   int _consecutiveRejections = 0;
 
+  /// Set when the app knows the location source is gone -- the OS closed the
+  /// stream, or location was switched off -- rather than merely quiet.
+  ///
+  /// Without it there is a dead zone: the staleness threshold has to expire
+  /// before GPS counts as unusable, and for those seconds nothing measures at
+  /// all, because GPS still looks healthy and the step fallback has not taken
+  /// over. Being told directly makes the handover immediate.
+  bool _locationUnavailable = false;
+
   /// Distance over time, from whichever source produced it. Pruned to a little
   /// more than the pace window, so it stays O(window) however long the run is.
   final List<_DistanceMark> _marks = <_DistanceMark>[];
@@ -186,6 +195,9 @@ class RunTracker {
     if (!_status.isInProgress) {
       return _route.isEmpty ? GpsQuality.acquiring : GpsQuality.good;
     }
+    // Known-gone beats not-heard-from-lately: no waiting on a timeout for
+    // something we have already been told about.
+    if (_locationUnavailable) return GpsQuality.weak;
     final last = _lastFix;
     if (last == null) return GpsQuality.acquiring;
     if (_clock().difference(last.timestamp) > config.gpsStaleThreshold) {
@@ -264,6 +276,15 @@ class RunTracker {
   }
 
   // ------------------------------------------------------------ step counter
+
+  /// Tells the engine whether the location source is available at all.
+  ///
+  /// Distinct from signal quality: this is "the OS closed the stream" or
+  /// "location is switched off", which the app learns immediately, rather than
+  /// "no usable fix recently", which can only be inferred after a timeout.
+  void setLocationUnavailable(bool unavailable) {
+    _locationUnavailable = unavailable;
+  }
 
   /// Feeds one pedometer reading.
   ///
@@ -399,6 +420,7 @@ class RunTracker {
     _smoothLat = null;
     _smoothLon = null;
     _consecutiveRejections = 0;
+    _locationUnavailable = false;
     // Step deltas must not span a discontinuity: the next reading re-baselines.
     _lastStep = null;
     _calibrationCursor = _distanceMeters - _stepMeters;
@@ -420,6 +442,9 @@ class RunTracker {
   /// gate.
   SampleOutcome addSample(LocationSample sample) {
     if (_status != RunStatus.active) return SampleOutcome.ignoredNotActive;
+
+    // A fix arriving is proof the source is back, whatever we were told.
+    _locationUnavailable = false;
 
     // F1: accuracy gate. The first fix of a run gets a looser bar so tracking
     // can begin before the antenna has fully settled.

@@ -490,6 +490,43 @@ void main() {
       expect(credited, greaterThan(100 * 0.9));
     });
 
+    test('losing location hands over to steps immediately, not after a timeout', () {
+      // Reported from the field: toggling GPS off froze every metric for
+      // several seconds. GPS still looked healthy until the staleness timeout
+      // expired, so the fallback had not taken over and nothing was measuring.
+      tracker.start();
+      feed(straightLine(start: t0, count: 30, metersPerFix: 3));
+      clock.now = t0.add(const Duration(seconds: 30));
+      tracker.addStepSample(steps(1000, 30));
+
+      expect(tracker.gpsQuality, GpsQuality.good);
+      final distanceBefore = tracker.distanceMeters;
+
+      // The OS closes the stream. One second later -- far inside the 10 s
+      // staleness threshold -- steps must already be carrying the run.
+      tracker.setLocationUnavailable(true);
+      expect(tracker.gpsQuality, GpsQuality.weak);
+
+      clock.advance(const Duration(seconds: 1));
+      tracker.addStepSample(steps(1020, 31));
+
+      expect(tracker.distanceMeters, greaterThan(distanceBefore));
+      expect(tracker.isEstimatingFromSteps, isTrue);
+      expect(tracker.metrics.currentSpeedMps, isNotNull);
+    });
+
+    test('a fix arriving proves location is back, whatever we were told', () {
+      tracker.start();
+      tracker.setLocationUnavailable(true);
+      expect(tracker.gpsQuality, GpsQuality.weak);
+
+      final sample = sampleAt(northMeters: 0, eastMeters: 0, at: t0);
+      clock.now = t0;
+      tracker.addSample(sample);
+
+      expect(tracker.gpsQuality, GpsQuality.good);
+    });
+
     test('an absurd calibration is clamped rather than trusted', () {
       // GPS drifting while the runner stands almost still would otherwise teach
       // the tracker a metres-per-step stride and wreck the fallback.
